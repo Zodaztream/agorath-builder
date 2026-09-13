@@ -127,12 +127,26 @@ export interface Currency {
 
 export const EMPTY_CURRENCY: Currency = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
 
+/**
+ * How the six base scores were arrived at. **No rule depends on this**, and the
+ * engine never reads it — but it is a record of an *input*, so it belongs to the
+ * definition rather than to the screen: it is what lets the builder reopen the
+ * same editor, and it travels with an exported character.
+ */
+export type AbilityMethod = 'standard-array' | 'point-buy' | 'manual';
+
 export interface CharacterDefinition {
   /** Pinned to the 2014 rules. The engine refuses any other value. */
   readonly ruleset: '2014';
   readonly packs: readonly PackRef[];
   readonly name: string;
   readonly abilities: AbilityScores;
+  /**
+   * Optional because characters exported before this field existed must still
+   * load; a builder that cannot say how the scores were made falls back to the
+   * typed-in editor.
+   */
+  readonly abilityMethod?: AbilityMethod;
   readonly levels: readonly LevelEntry[];
   readonly race: string | null;
   readonly subrace: string | null;
@@ -168,6 +182,14 @@ export interface Source {
 }
 
 /**
+ * `summary` is on every entry kind below, and the engine computes nothing from
+ * it. It is there because a builder that offers a choice it cannot describe is a
+ * list of names: the phrase the pack wrote is what a card shows next to the
+ * option. Content is data and the UI renders it — so the sentence travels with
+ * the entry rather than being authored a second time in the app.
+ */
+
+/**
  * A class entry carries only its *features*. Hit die, saving throws, ASI
  * levels, subclass level and spellcasting progression are rules of the game and
  * live in the engine's verified CLASS_RULES table, so a pack cannot get them
@@ -178,6 +200,7 @@ export interface ClassEntry {
   readonly name: string;
   readonly source: Source;
   readonly features: readonly FeatureEntry[];
+  readonly summary: string;
 }
 
 /**
@@ -190,6 +213,7 @@ export interface SubclassEntry {
   readonly name: string;
   readonly class: string;
   readonly features: readonly FeatureEntry[];
+  readonly summary: string;
 }
 
 /**
@@ -230,18 +254,21 @@ export interface RaceEntry {
   readonly name: string;
   readonly abilityIncreases: readonly AbilityIncrease[];
   readonly effects: readonly Effect[];
+  readonly summary: string;
 }
 
 export interface BackgroundEntry {
   readonly id: string;
   readonly name: string;
   readonly effects: readonly Effect[];
+  readonly summary: string;
 }
 
 export interface FeatEntry {
   readonly id: string;
   readonly name: string;
   readonly effects: readonly Effect[];
+  readonly summary: string;
 }
 
 export interface AbilityIncrease {
@@ -264,6 +291,7 @@ export interface ItemEntry {
   readonly weapon: WeaponEntry | null;
   readonly requiresAttunement: boolean;
   readonly effects: readonly Effect[];
+  readonly summary: string;
 }
 
 export interface WeaponEntry {

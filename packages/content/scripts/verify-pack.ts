@@ -1,19 +1,32 @@
 /**
  * Check a content pack without opening the app.
  *
- *   npm run verify --workspace @agorath/content -- /path/to/pack.json
+ *   npm run verify --workspace @agorath/content -- path/to/pack.json
  *
  * The same validation the browser runs on upload, with a non-zero exit code so
  * it can gate a script or a CI job. This is where "an offer naming a pool with
  * no options" is meant to be caught — before a player ever sees it.
+ *
+ * The path is taken relative to **where the command was typed**, not to this
+ * package. `npm run` moves the working directory to the workspace, so a
+ * repository-relative path would resolve against `packages/content/` and not be
+ * found; `INIT_CWD` is where the caller actually was, and it is the only place a
+ * path argument can sensibly mean.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { readPackText } from '../src/pack.ts';
 
-const path = process.argv[2];
-if (path === undefined) {
+const argument = process.argv[2];
+if (argument === undefined) {
   console.error('usage: npm run verify --workspace @agorath/content -- <pack.json>');
+  process.exit(2);
+}
+
+const path = resolve(process.env['INIT_CWD'] ?? process.cwd(), argument);
+if (!existsSync(path)) {
+  console.error(`no such pack: ${path}`);
   process.exit(2);
 }
 

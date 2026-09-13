@@ -58,12 +58,19 @@ export interface PackMeta {
   readonly requires: readonly string[];
 }
 
-/** One entry, as the UI needs to list it. The engine never sees this. */
+/**
+ * One entry, as the UI needs to list it. The engine never sees this.
+ *
+ * The summary is the pack's own sentence about the entry, carried through so a
+ * chooser can say what it is offering. It is empty when the pack did not write
+ * one, and a card must render that case rather than showing a gap.
+ */
 export interface CatalogEntry {
   readonly id: string;
   readonly name: string;
   /** The class a subclass belongs to, or the pool an option belongs to. */
   readonly group: string;
+  readonly summary: string;
 }
 
 export interface PackCatalog {
@@ -226,27 +233,30 @@ export function readPack(document: unknown): PackReadResult {
     warnUnknownFields(raw, allowed, where, warnings);
 
     const name = asString(raw['name'], id);
+    // Every entry carries the sentence the pack wrote about it, so a card can
+    // describe what it is offering. See `CatalogEntry`.
+    const summary = asString(raw['summary']);
     switch (kind) {
       case 'class':
-        classes.push({ id, name, source: readSource(raw['source']), features: readFeatures(raw['features'], `${name} features`, errors, warnings) });
+        classes.push({ id, name, summary, source: readSource(raw['source']), features: readFeatures(raw['features'], `${name} features`, errors, warnings) });
         break;
       case 'subclass': {
         const parent = asString(raw['class']);
         if (parent === '') errors.push(`${where}: a subclass must name the class it belongs to ("class").`);
-        subclasses.push({ id, name, class: parent, features: readFeatures(raw['features'], `${name} features`, errors, warnings) });
+        subclasses.push({ id, name, summary, class: parent, features: readFeatures(raw['features'], `${name} features`, errors, warnings) });
         break;
       }
       case 'race':
-        races.push({ id, name, abilityIncreases: readIncreases(raw['abilityIncreases'], where, errors), effects: readEffects(raw['effects'], where, errors, warnings) });
+        races.push({ id, name, summary, abilityIncreases: readIncreases(raw['abilityIncreases'], where, errors), effects: readEffects(raw['effects'], where, errors, warnings) });
         break;
       case 'background':
-        backgrounds.push({ id, name, effects: readEffects(raw['effects'], where, errors, warnings) });
+        backgrounds.push({ id, name, summary, effects: readEffects(raw['effects'], where, errors, warnings) });
         break;
       case 'feat':
         if (raw['prerequisites'] !== undefined) {
           warnings.push(`${where}: the engine does not read a feat's prerequisites yet, so they are inert.`);
         }
-        feats.push({ id, name, effects: readEffects(raw['effects'], where, errors, warnings) });
+        feats.push({ id, name, summary, effects: readEffects(raw['effects'], where, errors, warnings) });
         break;
       case 'item': {
         const item = readItem(raw, id, name, where, errors, warnings);
@@ -305,11 +315,16 @@ function emptyCatalog(): PackCatalog {
   };
 }
 
-function catalogue<T extends { id: string; name: string }>(
+function catalogue<T extends { id: string; name: string; summary: string }>(
   entries: readonly T[],
   group?: (entry: T) => string,
 ): readonly CatalogEntry[] {
-  return entries.map((entry) => ({ id: entry.id, name: entry.name, group: group?.(entry) ?? '' }));
+  return entries.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    group: group?.(entry) ?? '',
+    summary: entry.summary,
+  }));
 }
 
 function readMeta(raw: unknown, errors: string[]): PackMeta | null {
@@ -596,6 +611,7 @@ function readItem(
   return {
     id,
     name,
+    summary: asString(raw['summary']),
     weight: asNumber(raw['weight']),
     armor,
     weapon,

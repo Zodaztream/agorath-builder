@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { inMemoryContent } from '../src/content.ts';
 import { derive } from '../src/derive.ts';
 import { EMPTY_CURRENCY, type Ability, type DerivedDice, type AbilityScores, type CharacterDefinition, type ClassEntry, type InventoryItem, type LevelChoice, type LevelEntry } from '../src/types.ts';
-import { ALL_CLASSES, ALL_FEATS, ALL_ITEMS, ALL_OPTIONS, ALL_SUBCLASSES, fighter, human, rogue, soldier } from './fixtures.ts';
+import { ALL_CLASSES, ALL_FEATS, ALL_ITEMS, ALL_OPTIONS, ALL_SUBCLASSES, champion, fighter, human, rogue, soldier } from './fixtures.ts';
 
 const content = inMemoryContent({
   classes: ALL_CLASSES,
@@ -775,13 +775,31 @@ test('a selection reports what the pool offers, so a picker can be rendered', ()
   const styles = sheet.selections.find((s) => s.pool === 'fighting-style');
   assert.deepEqual(styles?.candidates.map((c) => c.name), ['Archery', 'Defense']);
 
+  // Every candidate carries the pack's own sentence about it, so a chooser can
+  // say what an option *is* rather than only what it is called.
+  assert.equal(styles?.candidates.every((c) => c.summary !== ''), true);
+
   // Before 3rd level the class offers no archetype, so there is no pool to
   // render at all — not an empty one.
   const one = derive(build({ levels: [at('fighter'), at('fighter')] }), content);
   assert.equal(one.selections.find((s) => s.pool === 'subclass:fighter'), undefined);
 
   const three = derive(build({ levels: [at('fighter'), at('fighter'), at('fighter')] }), content);
-  assert.deepEqual(three.selections.find((s) => s.pool === 'subclass:fighter')?.candidates.map((c) => c.name), ['Champion']);
+  const archetype = three.selections.find((s) => s.pool === 'subclass:fighter');
+  assert.deepEqual(archetype?.candidates.map((c) => c.name), ['Champion']);
+  assert.equal(archetype?.candidates[0]?.summary, champion.summary, 'a written summary is used as written');
+
+  // A pack that wrote no sentence for its archetypes — which the pilot pack has
+  // not, yet — still gets a card: the feature that opens the subclass is its
+  // description, and taking the pack's own words is the only honest fallback.
+  const unwritten = inMemoryContent({
+    classes: [fighter],
+    subclasses: [{ ...champion, summary: '' }],
+    options: ALL_OPTIONS,
+  });
+  const bare = derive(build({ levels: [at('fighter'), at('fighter'), at('fighter')] }), unwritten)
+    .selections.find((s) => s.pool === 'subclass:fighter');
+  assert.equal(bare?.candidates[0]?.summary, 'Improved Critical — Fixture: weapon attacks crit on 19 or 20.');
 });
 
 test('advancements report where an ASI-or-feat is owed', () => {

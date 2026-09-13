@@ -27,6 +27,7 @@ const PHB = (page: number) => ({ book: 'PHB', page });
 export const fighter: ClassEntry = {
   id: 'fighter',
   name: 'Fighter',
+  summary: 'Fixture: the fighter, with a skill list, a fighting style and an archetype.',
   source: PHB(70),
   features: [
     { id: 'fighter-proficiencies', name: 'Proficiencies', level: 1, summary: 'Fixture: all armour, shields, simple and martial weapons.', effects: [
@@ -50,6 +51,7 @@ export const fighter: ClassEntry = {
 export const rogue: ClassEntry = {
   id: 'rogue',
   name: 'Rogue',
+  summary: 'Fixture: the rogue, whose expertise draws on skills and tools alike.',
   source: PHB(94),
   features: [
     { id: 'rogue-proficiencies', name: 'Proficiencies', level: 1, summary: 'Fixture: light armour, simple weapons, thieves\' tools.', effects: [
@@ -85,6 +87,7 @@ export const rogue: ClassEntry = {
 export const barbarian: ClassEntry = {
   id: 'barbarian',
   name: 'Barbarian',
+  summary: 'Fixture: the barbarian, with unarmoured defence and rage.',
   source: PHB(46),
   features: [
     { id: 'barbarian-proficiencies', name: 'Proficiencies', level: 1, summary: 'Fixture: light and medium armour, shields, simple and martial weapons.', effects: [
@@ -103,6 +106,7 @@ export const barbarian: ClassEntry = {
 export const monk: ClassEntry = {
   id: 'monk',
   name: 'Monk',
+  summary: 'Fixture: the monk, for a second unarmoured AC formula.',
   source: PHB(76),
   features: [
     { id: 'monk-proficiencies', name: 'Proficiencies', level: 1, summary: 'Fixture: simple weapons and shortswords.', effects: [
@@ -120,6 +124,7 @@ export const monk: ClassEntry = {
 export const bard: ClassEntry = {
   id: 'bard',
   name: 'Bard',
+  summary: 'Fixture: the bard, for half proficiency on everything.',
   source: PHB(51),
   features: [
     { id: 'bard-jack-of-all-trades', name: 'Jack of All Trades', level: 2, summary: 'Fixture: half proficiency, rounded down, on checks you are not proficient in.', effects: [
@@ -128,10 +133,10 @@ export const bard: ClassEntry = {
   ],
 };
 
-export const wizard: ClassEntry = { id: 'wizard', name: 'Wizard', source: PHB(112), features: [] };
-export const paladin: ClassEntry = { id: 'paladin', name: 'Paladin', source: PHB(82), features: [] };
-export const warlock: ClassEntry = { id: 'warlock', name: 'Warlock', source: PHB(105), features: [] };
-export const cleric: ClassEntry = { id: 'cleric', name: 'Cleric', source: PHB(56), features: [] };
+export const wizard: ClassEntry = { id: 'wizard', name: 'Wizard', summary: 'Fixture: a full caster with no features of its own.', source: PHB(112), features: [] };
+export const paladin: ClassEntry = { id: 'paladin', name: 'Paladin', summary: 'Fixture: a half caster, for the multiclass table.', source: PHB(82), features: [] };
+export const warlock: ClassEntry = { id: 'warlock', name: 'Warlock', summary: 'Fixture: a pact caster, so Pact Magic has a user.', source: PHB(105), features: [] };
+export const cleric: ClassEntry = { id: 'cleric', name: 'Cleric', summary: 'Fixture: a class nothing else in the corpus uses.', source: PHB(56), features: [] };
 
 // ---------------------------------------------------------------------------
 // Subclasses — the one pool member that carries features rather than effects
@@ -140,6 +145,7 @@ export const cleric: ClassEntry = { id: 'cleric', name: 'Cleric', source: PHB(56
 export const champion: SubclassEntry = {
   id: 'champion',
   name: 'Champion',
+  summary: 'Fixture: the champion, whose crit range and second fighting style are both testable.',
   class: 'fighter',
   features: [
     { id: 'champion-improved-critical', name: 'Improved Critical', level: 3, summary: 'Fixture: weapon attacks crit on 19 or 20.', effects: [
@@ -208,6 +214,7 @@ export const nameTrap: OptionEntry = {
 export const human: RaceEntry = {
   id: 'human',
   name: 'Human',
+  summary: 'Fixture: every ability score increases by 1.',
   abilityIncreases: [
     { ability: 'str', amount: 1 }, { ability: 'dex', amount: 1 }, { ability: 'con', amount: 1 },
     { ability: 'int', amount: 1 }, { ability: 'wis', amount: 1 }, { ability: 'cha', amount: 1 },
@@ -218,6 +225,7 @@ export const human: RaceEntry = {
 export const soldier: BackgroundEntry = {
   id: 'soldier',
   name: 'Soldier',
+  summary: 'Fixture: proficiency in Athletics and Intimidation.',
   effects: [
     { shape: 'proficiency.grant', kind: 'skill', ids: ['athletics', 'intimidation'] },
   ],
@@ -226,6 +234,7 @@ export const soldier: BackgroundEntry = {
 export const tough: FeatEntry = {
   id: 'tough',
   name: 'Tough',
+  summary: 'Fixture: two hit points per level, on every level.',
   effects: [{ shape: 'hp.per-level', amount: 2 }],
 };
 
@@ -233,10 +242,16 @@ export const tough: FeatEntry = {
 export const tavernBrawler: FeatEntry = {
   id: 'tavern-brawler',
   name: 'Tavern Brawler',
+  summary: 'Fixture: raises Strength by 1.',
   effects: [{ shape: 'ability.increase', ability: 'str', amount: 1 }],
 };
 
-export const grappler: FeatEntry = { id: 'grappler', name: 'Grappler', effects: [] };
+export const grappler: FeatEntry = {
+  id: 'grappler',
+  name: 'Grappler',
+  summary: 'Fixture: a feat with no effects at all, so a feat may compute nothing.',
+  effects: [],
+};
 
 // ---------------------------------------------------------------------------
 // Equipment
@@ -251,7 +266,7 @@ const weapon = (
   properties: readonly string[],
   opts: { versatile?: { count: number; die: number }; ranged?: boolean } = {},
 ): ItemEntry => ({
-  id, name, weight: 3, armor: null, requiresAttunement: false, effects: [],
+  id, name, summary: '', weight: 3, armor: null, requiresAttunement: false, effects: [],
   weapon: {
     category, damage, versatile: opts.versatile ?? null, damageType,
     melee: !opts.ranged, ranged: opts.ranged ?? false, properties,
@@ -265,7 +280,7 @@ const armour = (
   baseAc: number,
   maxDex: number | null,
 ): ItemEntry => ({
-  id, name, weight: 10, weapon: null, requiresAttunement: false, effects: [],
+  id, name, summary: '', weight: 10, weapon: null, requiresAttunement: false, effects: [],
   armor: { kind, baseAc, maxDex },
 });
 
@@ -277,12 +292,15 @@ export const shortbow = weapon('shortbow', 'Shortbow', 'simple', { count: 1, die
 /** A magic weapon: its bonuses belong to it, not to whatever else is held. */
 export const longswordPlus1: ItemEntry = {
   ...weapon('longsword-plus-1', 'Longsword +1', 'martial', { count: 1, die: 8 }, 'slashing', [], { versatile: { count: 1, die: 10 } }),
+  summary: 'Fixture: a magic weapon, whose bonus belongs to it alone.',
   effects: [{ shape: 'attack.bonus', amount: 1 }, { shape: 'damage.bonus', amount: 1 }],
 };
 
 /** A worn item with an effect that is *not* a weapon line, so it stays global. */
 export const cloakOfProtection: ItemEntry = {
-  id: 'cloak-of-protection', name: 'Cloak of Protection', weight: 1,
+  id: 'cloak-of-protection', name: 'Cloak of Protection',
+  summary: 'Fixture: +1 to AC, and it requires attunement.',
+  weight: 1,
   armor: null, weapon: null, requiresAttunement: true,
   effects: [{ shape: 'ac.bonus', amount: 1 }],
 };

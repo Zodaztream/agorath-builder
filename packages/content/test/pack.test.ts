@@ -22,6 +22,7 @@ const valid = () => ({
   entries: [
     {
       id: 'fighter', kind: 'class', name: 'Fighter', source: PHB(70),
+      summary: 'A master of martial combat.',
       features: [
         {
           id: 'fighter-fighting-style', name: 'Fighting Style', level: 1,
@@ -52,9 +53,18 @@ test('a valid pack loads, and describes itself', () => {
   assert.deepEqual(result.warnings, []);
   assert.equal(result.meta?.id, 'test');
   assert.equal(result.meta?.ruleset, '2014');
-  assert.deepEqual(result.catalog.classes, [{ id: 'fighter', name: 'Fighter', group: '' }]);
-  assert.deepEqual(result.catalog.options, [{ id: 'archery', name: 'Archery', group: 'fighting-style' }]);
-  assert.deepEqual(result.catalog.subclasses, [{ id: 'champion', name: 'Champion', group: 'fighter' }]);
+  // The catalogue carries the pack's own sentence about each entry, because a
+  // chooser that cannot describe what it offers is a list of names. A subclass
+  // written without one gets an empty string, and the card has to cope.
+  assert.deepEqual(result.catalog.classes, [
+    { id: 'fighter', name: 'Fighter', group: '', summary: 'A master of martial combat.' },
+  ]);
+  assert.deepEqual(result.catalog.options, [
+    { id: 'archery', name: 'Archery', group: 'fighting-style', summary: '+2 to attack rolls with ranged weapons.' },
+  ]);
+  assert.deepEqual(result.catalog.subclasses, [
+    { id: 'champion', name: 'Champion', group: 'fighter', summary: '' },
+  ]);
   assert.equal(result.catalog.counts['options'], 1);
 });
 

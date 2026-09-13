@@ -10,6 +10,7 @@
 
 export type {
   Ability,
+  AbilityMethod,
   AbilityScores,
   AbilityIncrease,
   BackgroundEntry,
@@ -108,3 +109,6 @@ export { inMemoryContent } from './content.ts';
 export type { ContentProvider } from './content.ts';
 
 export { ATTUNEMENT_LIMIT, derive, describeAbility } from './derive.ts';
+
+export { previewLevel, previewTakenLevel } from './preview.ts';
+export type { LevelGain, LevelOffer, LevelPlan, LevelUpPreview, SlotGain } from './preview.ts';

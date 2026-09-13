@@ -839,6 +839,9 @@ function customAsItem(custom: CustomItem, content: ContentProvider, diagnostics:
   return {
     id: custom.id,
     name: custom.name,
+    // A custom item describes itself: the base's sentence would be about the
+    // base, and the player is the only one who knows what this one is.
+    summary: base === null ? 'A custom item.' : `${custom.name} is built on a ${base.name}.`,
     weight: base?.weight ?? 0,
     armor: base?.armor ?? null,
     weapon: base?.weapon ?? null,
@@ -904,7 +907,17 @@ function resolvePool(
   } else if (family === 'subclass') {
     kind = 'subclass';
     for (const entry of content.subclassesOf(qualifier)) {
-      members.set(entry.id, { id: entry.id, name: entry.name, kind: 'subclass', summary: '', option: null, subclass: entry });
+      // The entry's own sentence travels with the candidate: a chooser that
+      // offers three archetype names and no descriptions is a list, and the
+      // pack already wrote what each one is.
+      members.set(entry.id, {
+        id: entry.id,
+        name: entry.name,
+        kind: 'subclass',
+        summary: entry.summary !== '' ? entry.summary : openingFeature(entry),
+        option: null,
+        subclass: entry,
+      });
     }
   } else {
     // A content pool is matched on its exact tag, qualifier included.
@@ -971,6 +984,22 @@ function resolvePool(
     grants,
     kind,
   };
+}
+
+/**
+ * What to say about an archetype the pack did not write a sentence for.
+ *
+ * A subclass's features *are* its description, and the first one is the one
+ * that answers "what is this?" — the champion's Improved Critical, a thief's
+ * Fast Hands. Taking the pack's own text is the only honest fallback: writing a
+ * summary here would be authoring book content from recall, which ADR-0004
+ * forbids, and inventing a blurb for a subclass nobody has read is worse than
+ * showing the feature that defines it.
+ */
+function openingFeature(entry: SubclassEntry): string {
+  const first = [...entry.features].sort((a, b) => a.level - b.level)[0];
+  if (first === undefined) return '';
+  return first.summary === '' ? first.name : `${first.name} — ${first.summary}`;
 }
 
 /**
