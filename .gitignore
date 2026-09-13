@@ -1,0 +1,29 @@
+# --- Never commit content that is not ours -----------------------------------
+# This repository is PUBLIC. The full (non-SRD) 5e content library is
+# copyrighted and is distributed to players privately as a runtime pack; it
+# must never land here. Same for the DM's rulebook PDFs.
+#
+# Default-deny, so a file dropped in later is ignored without anyone
+# remembering to add a rule.
+
+*.pdf
+packs/
+content-packs/
+books/
+*.pack.json
+
+# --- Build output ------------------------------------------------------------
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+coverage/
+.vite/
+
+# --- Editor / OS -------------------------------------------------------------
+.DS_Store
+**/.DS_Store
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
