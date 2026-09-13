@@ -1,0 +1,400 @@
+/**
+ * Domain types for the character definition and the derived sheet.
+ *
+ * The central rule: a CharacterDefinition holds *inputs only*. Nothing the
+ * rules compute is ever stored. A derived sheet is produced from a definition
+ * by `derive()` and never written back, which is what makes a stale number
+ * after a level-up structurally impossible rather than a bug to hunt.
+ */
+
+/** The six ability scores. */
+export type Ability = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+
+export const ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
+
+export const ABILITY_NAMES: Readonly<Record<Ability, string>> = {
+  str: 'Strength',
+  dex: 'Dexterity',
+  con: 'Constitution',
+  int: 'Intelligence',
+  wis: 'Wisdom',
+  cha: 'Charisma',
+};
+
+export type AbilityScores = Readonly<Record<Ability, number>>;
+
+/** The 18 skills, and the ability each is governed by. */
+export type SkillId =
+  | 'acrobatics'
+  | 'animal-handling'
+  | 'arcana'
+  | 'athletics'
+  | 'deception'
+  | 'history'
+  | 'insight'
+  | 'intimidation'
+  | 'investigation'
+  | 'medicine'
+  | 'nature'
+  | 'perception'
+  | 'performance'
+  | 'persuasion'
+  | 'religion'
+  | 'sleight-of-hand'
+  | 'stealth'
+  | 'survival';
+
+export type DamageType =
+  | 'acid' | 'bludgeoning' | 'cold' | 'fire' | 'force' | 'lightning'
+  | 'necrotic' | 'piercing' | 'poison' | 'psychic' | 'radiant'
+  | 'slashing' | 'thunder';
+
+export const DAMAGE_TYPES: readonly DamageType[] = [
+  'acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning',
+  'necrotic', 'piercing', 'poison', 'psychic', 'radiant',
+  'slashing', 'thunder',
+];
+
+// ---------------------------------------------------------------------------
+// Character definition — inputs only
+// ---------------------------------------------------------------------------
+
+/** A reference to a content pack the character was built against. */
+export interface PackRef {
+  readonly id: string;
+  readonly version: string;
+}
+
+/**
+ * One level taken, in the order it was taken.
+ *
+ * The ordered list is load-bearing: total character level is its length, class
+ * level is the count of that class, and multiclass entry order falls out of
+ * position — which decides whether a class grants its full level-1
+ * proficiencies or the reduced multiclass set.
+ */
+export interface LevelEntry {
+  readonly class: string;
+  readonly subclass: string | null;
+  /**
+   * Hit points for this level. Ignored at character level 1, which always
+   * takes the maximum of the hit die.
+   */
+  readonly hp: HitPointRoll;
+  /** Choices made at this level: ASI-or-feat, expertise, subclass features. */
+  readonly choices: readonly LevelChoice[];
+}
+
+export type HitPointRoll =
+  | { readonly mode: 'average' }
+  | { readonly mode: 'rolled'; readonly value: number };
+
+/**
+ * A choice made at a level. A discriminated union rather than a loose
+ * kind/value pair, so an ASI cannot be silently mistyped into a no-op.
+ */
+export type LevelChoice =
+  | { readonly kind: 'asi'; readonly increases: readonly AbilityIncrease[] }
+  | { readonly kind: 'feat'; readonly feat: string }
+  | { readonly kind: 'expertise'; readonly skills: readonly SkillId[] }
+  | { readonly kind: 'other'; readonly id: string; readonly value: string };
+
+export interface InventoryItem {
+  readonly item: string;
+  readonly quantity: number;
+  readonly equipped: boolean;
+  readonly attuned: boolean;
+  /** A player-authored item, carried inline so it travels with the export. */
+  readonly custom: CustomItem | null;
+}
+
+export interface Currency {
+  readonly cp: number;
+  readonly sp: number;
+  readonly ep: number;
+  readonly gp: number;
+  readonly pp: number;
+}
+
+export const EMPTY_CURRENCY: Currency = { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 };
+
+export interface CharacterDefinition {
+  /** Pinned to the 2014 rules. The engine refuses any other value. */
+  readonly ruleset: '2014';
+  readonly packs: readonly PackRef[];
+  readonly name: string;
+  readonly abilities: AbilityScores;
+  readonly levels: readonly LevelEntry[];
+  readonly race: string | null;
+  readonly subrace: string | null;
+  readonly background: string | null;
+  readonly inventory: readonly InventoryItem[];
+  readonly currency: Currency;
+}
+
+// ---------------------------------------------------------------------------
+// Player-authored content
+// ---------------------------------------------------------------------------
+
+/**
+ * A custom item. Uses the same effect shapes as a pack item, so it flows into
+ * the computed attack and damage lines through exactly the same code path.
+ */
+export interface CustomItem {
+  readonly id: string;
+  readonly name: string;
+  readonly tier: 'custom';
+  /** A pack item id supplying the mundane statistics. Null for a trinket. */
+  readonly base: string | null;
+  readonly effects: readonly Effect[];
+}
+
+// ---------------------------------------------------------------------------
+// Content entries — what a pack provides
+// ---------------------------------------------------------------------------
+
+export interface Source {
+  readonly book: string;
+  readonly page: number;
+}
+
+/**
+ * A class entry carries only its *features*. Hit die, saving throws, ASI
+ * levels, subclass level and spellcasting progression are rules of the game and
+ * live in the engine's verified CLASS_RULES table, so a pack cannot get them
+ * wrong and there is one place to audit them.
+ */
+export interface ClassEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly source: Source;
+  readonly features: readonly FeatureEntry[];
+}
+
+export interface SubclassEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly class: string;
+  readonly features: readonly FeatureEntry[];
+}
+
+export interface SpellcastingProfile {
+  readonly ability: Ability;
+  readonly progression: 'full' | 'half' | 'third' | 'pact';
+  readonly preparation: 'prepared' | 'known';
+}
+
+export interface FeatureEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly level: number;
+  readonly summary: string;
+  readonly effects: readonly Effect[];
+}
+
+export interface RaceEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly abilityIncreases: readonly AbilityIncrease[];
+  readonly effects: readonly Effect[];
+}
+
+export interface BackgroundEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly effects: readonly Effect[];
+}
+
+export interface FeatEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly effects: readonly Effect[];
+}
+
+export interface AbilityIncrease {
+  readonly ability: Ability;
+  readonly amount: number;
+}
+
+export interface ArmorEntry {
+  readonly kind: 'light' | 'medium' | 'heavy' | 'shield';
+  readonly baseAc: number;
+  /** Maximum DEX modifier the armour allows. Null when uncapped. */
+  readonly maxDex: number | null;
+}
+
+export interface ItemEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly weight: number;
+  readonly armor: ArmorEntry | null;
+  readonly weapon: WeaponEntry | null;
+  readonly requiresAttunement: boolean;
+  readonly effects: readonly Effect[];
+}
+
+export interface WeaponEntry {
+  /** Proficiency is granted by category, or by naming the weapon itself. */
+  readonly category: 'simple' | 'martial';
+  readonly damage: Dice;
+  readonly versatile: Dice | null;
+  readonly damageType: DamageType;
+  readonly melee: boolean;
+  readonly ranged: boolean;
+  readonly properties: readonly string[];
+}
+
+export interface Dice {
+  readonly count: number;
+  readonly die: number;
+}
+
+// ---------------------------------------------------------------------------
+// Effects — the closed catalogue of shapes
+// ---------------------------------------------------------------------------
+
+/**
+ * A scope narrows which attacks or checks an effect touches. A declarative
+ * filter, never a predicate function: content stays data.
+ */
+export interface Scope {
+  readonly kind?: 'weapon' | 'check' | 'save';
+  readonly melee?: boolean;
+  readonly ranged?: boolean;
+  readonly properties?: readonly string[];
+  readonly skills?: readonly SkillId[];
+  readonly abilities?: readonly Ability[];
+}
+
+export interface Condition {
+  /** The effect applies only if the player opts in at the table. */
+  readonly optional: boolean;
+  readonly label: string;
+}
+
+export type Effect = EffectShape & {
+  readonly scope?: Scope;
+  readonly condition?: Condition;
+};
+
+/**
+ * The closed catalogue. Every shape the engine understands, and nothing else:
+ * a feature that fits no shape is `feature.text` and computes nothing.
+ */
+export type EffectShape =
+  | { readonly shape: 'ability.increase'; readonly ability: Ability; readonly amount: number; readonly max: number }
+  | { readonly shape: 'proficiency.grant'; readonly kind: 'skill' | 'save' | 'tool' | 'armor' | 'weapon'; readonly ids: readonly string[] }
+  | { readonly shape: 'proficiency.expertise'; readonly kind: 'skill'; readonly ids: readonly string[] }
+  | { readonly shape: 'proficiency.half'; readonly kind: 'skill' }
+  | { readonly shape: 'check.floor'; readonly value: number }
+  | { readonly shape: 'check.advantage' }
+  | { readonly shape: 'ac.formula'; readonly label: string; readonly base: number; readonly abilities: readonly Ability[]; readonly allowShield: boolean; readonly requiresNoArmor: boolean; readonly requiresNoShield: boolean }
+  | { readonly shape: 'ac.bonus'; readonly amount: number }
+  | { readonly shape: 'hp.per-level'; readonly amount: number }
+  | { readonly shape: 'hp.flat'; readonly amount: number }
+  | { readonly shape: 'speed.set'; readonly amount: number }
+  | { readonly shape: 'speed.bonus'; readonly amount: number }
+  | { readonly shape: 'attack.bonus'; readonly amount: number }
+  | { readonly shape: 'damage.bonus'; readonly amount: number }
+  | { readonly shape: 'damage.dice'; readonly dice: Dice; readonly damageType: DamageType; readonly label: string }
+  | { readonly shape: 'attack.count'; readonly value: number }
+  | { readonly shape: 'unarmed.die'; readonly die: number }
+  | { readonly shape: 'spellcasting.grant'; readonly classId: string; readonly ability: Ability; readonly progression: 'full' | 'half' | 'third' | 'pact'; readonly preparation: 'prepared' | 'known' }
+  | { readonly shape: 'spell.dc.bonus'; readonly amount: number }
+  | { readonly shape: 'initiative.bonus'; readonly amount: number }
+  | { readonly shape: 'resource.pool'; readonly id: string; readonly max: string; readonly recharge: 'short' | 'long' };
+  // Note: there is deliberately no `feature.text` shape. Every FeatureEntry
+  // already carries a name, a level and a summary, and the derivation pass
+  // surfaces those as notes. A separate text shape would duplicate that.
+
+export type EffectShapeId = EffectShape['shape'];
+
+// ---------------------------------------------------------------------------
+// Derived sheet — computed, never stored
+// ---------------------------------------------------------------------------
+
+export interface DerivedAbility {
+  readonly id: Ability;
+  readonly score: number;
+  readonly modifier: number;
+}
+
+export interface DerivedSkill {
+  readonly id: SkillId;
+  readonly ability: Ability;
+  readonly proficient: boolean;
+  readonly expertise: boolean;
+  readonly halfProficiency: boolean;
+  readonly bonus: number;
+}
+
+export interface DerivedSave {
+  readonly ability: Ability;
+  readonly proficient: boolean;
+  readonly bonus: number;
+}
+
+export interface DerivedDamageComponent {
+  readonly dice: Dice | null;
+  readonly flat: number;
+  readonly damageType: DamageType;
+  readonly label: string | null;
+  readonly conditional: boolean;
+}
+
+export interface DerivedAttack {
+  readonly name: string;
+  readonly ability: Ability;
+  readonly toHit: number;
+  readonly damage: readonly DerivedDamageComponent[];
+  readonly notes: readonly string[];
+}
+
+/** A feature the sheet cannot compute, surfaced as text. */
+export interface DerivedNote {
+  readonly name: string;
+  readonly level: number;
+  readonly summary: string;
+}
+
+export interface DerivedSpellcasting {
+  readonly source: string;
+  readonly ability: Ability;
+  readonly saveDc: number;
+  readonly attackBonus: number;
+  readonly slots: readonly number[];
+}
+
+export interface DerivedResource {
+  readonly id: string;
+  readonly max: number;
+  readonly recharge: 'short' | 'long';
+}
+
+export interface DerivedSheet {
+  readonly name: string;
+  readonly totalLevel: number;
+  readonly classLevels: Readonly<Record<string, number>>;
+  readonly proficiencyBonus: number;
+  readonly abilities: Readonly<Record<Ability, DerivedAbility>>;
+  readonly skills: readonly DerivedSkill[];
+  readonly saves: readonly DerivedSave[];
+  readonly passive: Readonly<Record<'perception' | 'investigation' | 'insight', number>>;
+  readonly armorClass: number;
+  readonly armorClassBreakdown: string;
+  readonly initiative: number;
+  readonly speed: number;
+  readonly hitPoints: { readonly maximum: number; readonly breakdown: string };
+  /** A floor applied to the d20 on proficient checks (Reliable Talent), or null. */
+  readonly checkFloor: number | null;
+  /** Diagnostics: content the character references that could not be resolved. */
+  readonly diagnostics: readonly string[];
+  readonly hitDice: Readonly<Record<string, number>>;
+  readonly attacks: readonly DerivedAttack[];
+  /** Attacks per Attack action: 1, or 2+ once Extra Attack applies. */
+  readonly attacksPerAction: number;
+  readonly spellcasting: readonly DerivedSpellcasting[];
+  readonly resources: readonly DerivedResource[];
+  /** Things the sheet cannot compute, shown as text. */
+  readonly notes: readonly DerivedNote[];
+}

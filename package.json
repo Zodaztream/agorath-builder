@@ -1,0 +1,17 @@
+{
+  "name": "agorath-builder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Character builder for a private D&D 5e (2014) campaign.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

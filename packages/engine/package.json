@@ -1,0 +1,21 @@
+{
+  "name": "@agorath/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "D&D 5e (2014) rules engine. Pure, framework-agnostic, and dependency-free.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
