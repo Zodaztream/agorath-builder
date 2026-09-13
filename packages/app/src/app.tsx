@@ -15,9 +15,9 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
 import { derive, inMemoryContent, type CharacterDefinition } from '@agorath/engine';
-import { readPackText, type PackReadResult } from '@agorath/content';
+import { readPackText, type PackCatalog, type PackReadResult } from '@agorath/content';
 import { clearPack, loadPack, savePack } from './pack-store.ts';
-import { emptyDefinition, poolHomes } from './store.ts';
+import { emptyDefinition, poolHomes, withStartingEquipment } from './store.ts';
 import { emptyDraft, type LevelDraft } from './level-up.ts';
 import { PackScreen } from './screens/pack-screen.tsx';
 import { BuildScreen } from './screens/build-screen.tsx';
@@ -25,6 +25,9 @@ import { LevelUpScreen } from './screens/level-up-screen.tsx';
 import { SheetScreen } from './screens/sheet-screen.tsx';
 
 const CHARACTER_KEY = 'agorath.character';
+
+/** What the sheet's item picker shows before any pack is loaded: nothing. */
+const EMPTY_CATALOG: PackCatalog = { classes: [], subclasses: [], races: [], backgrounds: [], feats: [], options: [], items: [], counts: {} };
 
 type Tab = 'pack' | 'build' | 'sheet';
 
@@ -102,8 +105,21 @@ export function App(): JSX.Element {
   };
 
   const commitLevel = (next: CharacterDefinition): void => {
-    setDefinition(next);
+    change(next);
     setDraft(null);
+  };
+
+  /**
+   * Every edit to the character goes through here.
+   *
+   * One rule has to hold between the definition and the content beyond what a
+   * screen remembers: the inventory matches what the class and background grant.
+   * Putting it here rather than at the four edits that happen to need it means
+   * a fifth — a background added later, a level removed — cannot be the one that
+   * forgets (ADR-0013). It is a no-op unless the grants themselves changed.
+   */
+  const change = (next: CharacterDefinition): void => {
+    setDefinition(withStartingEquipment(next, content, definition));
   };
 
   const exportCharacter = (): void => {
@@ -195,7 +211,7 @@ export function App(): JSX.Element {
             catalog={packResult.catalog}
             sheet={sheet}
             homes={homes}
-            onChange={setDefinition}
+            onChange={change}
             onExport={exportCharacter}
             onImport={importCharacter}
             onAdvance={beginLevel}
@@ -205,8 +221,11 @@ export function App(): JSX.Element {
         {tab === 'sheet' && (
           <SheetScreen
             definition={definition}
+            content={content}
+            catalog={packResult?.catalog ?? EMPTY_CATALOG}
             sheet={sheet}
             packLabel={packResult === null || packResult.meta === null ? '' : `${packResult.meta.name} v${packResult.meta.version}`}
+            onChange={change}
             onExport={exportCharacter}
             onImport={importCharacter}
           />

@@ -32,6 +32,13 @@ export interface ContentProvider {
   readonly options: (pool: string) => readonly OptionEntry[];
   /** Membership of `subclass:<classId>`, from `SubclassEntry.class`. */
   readonly subclassesOf: (classId: string) => readonly SubclassEntry[];
+  /**
+   * Every item the loaded packs define. The engine narrows this itself, which
+   * is why the filter is a rule rather than a tag: `weapon:martial` is the set
+   * of entries whose own `weapon.category` says martial, and no pack has to
+   * keep a second list in step with the first.
+   */
+  readonly items: () => readonly ItemEntry[];
 }
 
 /**
@@ -89,5 +96,6 @@ export function inMemoryContent(source: {
     option: options,
     options: optionsByPool,
     subclassesOf: subclassesByClass,
+    items: () => source.items ?? [],
   };
 }

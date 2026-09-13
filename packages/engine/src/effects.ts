@@ -141,6 +141,12 @@ export interface OfferGrant {
   readonly from: readonly string[] | null;
   readonly grants: readonly ChoiceGrant[];
   readonly origin: string;
+  /**
+   * The pool this offer came out of, when a picked option offered it — a class
+   * hands over "a martial weapon" to choose, and that choice exists only
+   * because the package was taken. Null for an offer no pick created.
+   */
+  readonly parent: string | null;
 }
 
 export interface FeatureNote {
@@ -263,6 +269,8 @@ export function collectEffect(
    * keeps it and a renamed feature must not orphan what it gave.
    */
   originId: string = origin,
+  /** The pool the pick came from, when this effect belongs to a picked option. */
+  parentPool: string | null = null,
 ): void {
   switch (effect.shape) {
     case 'ability.increase':
@@ -408,6 +416,7 @@ export function collectEffect(
         from: effect.from,
         grants: effect.grants,
         origin,
+        parent: parentPool,
       });
       break;
 

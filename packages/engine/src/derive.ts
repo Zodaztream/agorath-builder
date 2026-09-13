@@ -96,11 +96,21 @@ export const ATTUNEMENT_LIMIT = 3;
 /** What armour costs in movement when the wearer misses its Strength (PHB 144). */
 export const ARMOR_SPEED_PENALTY = 10;
 
+/**
+ * How many rounds of selection resolution may find something new.
+ *
+ * A pick can confer an offer — a class hands a player "a martial weapon" to
+ * choose — so resolution repeats until a round settles nothing. Each round
+ * settles at least one selection or stops, so this only bounds depth, and the
+ * deepest thing the book asks for is two.
+ */
+const MAX_RESOLUTION_ROUNDS = 8;
+
 /** What a pick from a pool turned out to be. */
 interface PoolMember {
   readonly id: string;
   readonly name: string;
-  readonly kind: 'skill' | 'tool' | 'option' | 'subclass';
+  readonly kind: 'skill' | 'tool' | 'option' | 'subclass' | 'item';
   /** What the entry says about itself, for a picker. Empty when it has none. */
   readonly summary: string;
   /** The entry behind the pick, when there is one. */
@@ -230,6 +240,7 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
       from: null,
       grants: [],
       origin: classId,
+      parent: null,
     });
   }
 
@@ -372,37 +383,76 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
   // the skills the *same* level just made them proficient in, so membership has
   // to be computed after the grants that create it.
   const offersByPool = new Map<string, OfferGrant[]>();
-  for (const offer of acc.offers) {
-    const bucket = offersByPool.get(offer.pool);
-    if (bucket === undefined) offersByPool.set(offer.pool, [offer]);
-    else bucket.push(offer);
-  }
+  const indexOffers = (): void => {
+    for (const offer of acc.offers) {
+      const bucket = offersByPool.get(offer.pool);
+      if (bucket === undefined) offersByPool.set(offer.pool, [offer]);
+      else if (!bucket.includes(offer)) bucket.push(offer);
+    }
+  };
+  indexOffers();
 
   const poolFor = (pool: string): ResolvedPool => resolvePool(pool, content, acc, offersByPool, diagnostics);
 
   const resolved = new Map<string, ResolvedPool>();
 
-  // Two phases, in this order, because a derived pool's membership depends on
-  // the grants other picks have just made: a rogue's Expertise draws on the
-  // skills the same feature made them proficient in.
-  const phases = [
-    selections.filter((s) => !s.pool.startsWith('proficient:')),
-    selections.filter((s) => s.pool.startsWith('proficient:')),
+  // Two orders, not one: non-derived pools first, because a derived pool's
+  // membership depends on grants other picks have just made — a rogue's
+  // Expertise draws on the skills the same feature made them proficient in.
+  const ordered = [
+    ...selections.map((s, index) => ({ s, index })).filter(({ s }) => !s.pool.startsWith('proficient:')),
+    ...selections.map((s, index) => ({ s, index })).filter(({ s }) => s.pool.startsWith('proficient:')),
   ];
-  for (const phase of phases) {
-    for (const selection of phase) {
-      const pool = resolved.get(selection.pool) ?? poolFor(selection.pool);
-      resolved.set(selection.pool, pool);
-      validateAndApply(selection, pool, acc, featureIds, notes, diagnostics);
+
+  // And **rounds**, because a pick can make an offer of its own. The book asks
+  // a player to choose rather than to have chosen — "a martial weapon and a
+  // shield, or two martial weapons" (PHB 72) — so the weapon pool only exists
+  // once the package that asks for it has been applied. Each round settles the
+  // selections whose pools now exist and collects whatever they confer; the
+  // loop ends when a round settles nothing new.
+  const settled = new Set<number>();
+  for (let round = 0; round <= MAX_RESOLUTION_ROUNDS; round += 1) {
+    let settledThisRound = false;
+    for (const { s, index } of ordered) {
+      if (settled.has(index)) continue;
+      // Deliberately not cached until it has an offer: a pool resolved in this
+      // round as "nobody offers this" may be offered by the end of it, and a
+      // cached empty answer would outlive the round that produced it.
+      const pool = resolved.get(s.pool) ?? poolFor(s.pool);
+      // A pool with no offer yet is not a mistake — it may be offered by an
+      // option a later round applies. Only the last round diagnoses it, which
+      // is what the loop below does.
+      if (pool.entitled === 0) continue;
+      resolved.set(s.pool, pool);
+      settled.add(index);
+      settledThisRound = true;
+      validateAndApply(s, pool, acc, featureIds, notes, diagnostics);
     }
+    if (!settledThisRound) break;
+    indexOffers();
+    if (round === MAX_RESOLUTION_ROUNDS) {
+      diagnostics.push(
+        'The choices in this character nest more deeply than the engine will follow, so some of them were not applied.',
+      );
+    }
+  }
+
+  // Anything still unsettled is a pick for a pool nothing offered, which is
+  // exactly the diagnostic `validateAndApply` opens with.
+  for (const { s, index } of ordered) {
+    if (settled.has(index)) continue;
+    const pool = resolved.get(s.pool) ?? poolFor(s.pool);
+    resolved.set(s.pool, pool);
+    validateAndApply(s, pool, acc, featureIds, notes, diagnostics);
   }
 
   // A pool the character has been offered but has not spent yet is resolved
   // too, so the sheet can say "1 of 2 chosen" rather than "0 of 0" — and so an
   // offer naming a pool nobody authored options for is caught even when the
-  // player has not tried to pick from it.
-  for (const pool of offersByPool.keys()) {
-    if (!resolved.has(pool)) resolved.set(pool, poolFor(pool));
+  // player has not tried to pick from it. Read from `acc.offers`, not from the
+  // index, so an offer a pick created is included.
+  for (const offer of acc.offers) {
+    if (!resolved.has(offer.pool)) resolved.set(offer.pool, poolFor(offer.pool));
   }
 
   // -- pass 4: abilities ----------------------------------------------------
@@ -857,7 +907,7 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
     critRange: acc.critMinimum,
     spellcasting,
     resources,
-    selections: describeSelections(resolved, acc.offers, selections),
+    selections: describeSelections(resolved, acc.offers, selections, kitPools(acc.offers, selections)),
     startingItems,
     armorNotes,
     advancements,
@@ -871,17 +921,40 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
 // ---------------------------------------------------------------------------
 
 /**
+ * The pool family a class's starting equipment is authored under:
+ * `starting-equipment:<classId>:<slot>`, one pool per (a)/(b) group.
+ *
+ * It is named here because exactly one rule reads it — a class taken after the
+ * first hands over no equipment — and a rule that keys on a name should key on
+ * *one* name, in one place, rather than on a prefix spelled out wherever it is
+ * needed. Everything else about the pool is ordinary: its members are content
+ * options that carry their own effects, exactly like any other content pool.
+ */
+export const STARTING_EQUIPMENT_FAMILY = 'starting-equipment';
+
+/** `starting-equipment:rogue:pack` → `starting-equipment`. */
+function poolFamilyOf(pool: string): string {
+  const separator = pool.indexOf(':');
+  return separator === -1 ? pool : pool.slice(0, separator);
+}
+
+/**
  * Whether a feature is a class's starting-equipment feature.
  *
- * Recognised by shape rather than by name: a feature that hands out items is
- * one, and nothing else in the catalogue does. Naming it by id or by pool
- * prefix would be the magic-string rule ADR-0009 rejected — and this rule needs
- * to hold for a class authored next year.
+ * Recognised by shape, not by id: a feature either hands items over outright or
+ * asks the player to choose between packages, and nothing else in the catalogue
+ * does either. A class authored next year is recognised without being named.
  */
 export function grantsEquipment(feature: {
-  readonly effects: readonly { readonly shape: string }[];
+  readonly effects: readonly { readonly shape: string; readonly pool?: string }[];
 }): boolean {
-  return feature.effects.some((effect) => effect.shape === 'inventory.grant');
+  return feature.effects.some(
+    (effect) =>
+      effect.shape === 'inventory.grant' ||
+      (effect.shape === 'choice.offer' &&
+        effect.pool !== undefined &&
+        poolFamilyOf(effect.pool) === STARTING_EQUIPMENT_FAMILY),
+  );
 }
 
 /**
@@ -1015,6 +1088,28 @@ function resolvePool(
         summary: entry.summary !== '' ? entry.summary : openingFeature(entry),
         option: null,
         subclass: entry,
+      });
+    }
+  } else if (family === 'weapon') {
+    // Things a pack defines, narrowed by the weapon's own category. There is no
+    // table here and no second list to keep in step: the filter reads each
+    // entry's `weapon.category`, which is a property the item already carries.
+    //
+    // It exists because the book asks a player to choose, not to have chosen:
+    // "a martial weapon and a shield, or two martial weapons" (PHB 72) cannot
+    // be a fixed grant, and authoring one option per weapon would copy every
+    // weapon's own line into a second entry that can drift from it.
+    kind = 'engine';
+    for (const entry of content.items()) {
+      if (entry.weapon === null) continue;
+      if (qualifier !== '' && entry.weapon.category !== qualifier) continue;
+      members.set(entry.id, {
+        id: entry.id,
+        name: entry.name,
+        kind: 'item',
+        summary: entry.summary,
+        option: null,
+        subclass: null,
       });
     }
   } else {
@@ -1154,13 +1249,21 @@ function validateAndApply(
       // A content pool: the entry carries its own reward.
       featureIds.add(member.option.id);
       notes.push({ name: member.option.name, level: selection.classLevel, summary: member.option.summary });
-      for (const effect of member.option.effects) collectEffect(acc, effect, member.option.name, member.option.id);
+      for (const effect of member.option.effects) {
+        collectEffect(acc, effect, member.option.name, member.option.id, selection.pool);
+      }
       continue;
     }
 
-    // A built-in pool: the offer says what the pick confers.
+    // A built-in pool: the offer says what the pick confers, and the pick
+    // supplies the id it confers it on.
     for (const grant of pool.grants) {
-      if (grant.shape === 'proficiency.grant') {
+      if (grant.shape === 'inventory.grant') {
+        // The item is the pick. `grantedBy` is the pool name, which is stable
+        // and cannot collide with an entry id: ids do not carry the colon that
+        // every pool family is named with.
+        acc.itemGrants.push({ item: member.id, quantity: 1, grantedBy: pool.pool });
+      } else if (grant.shape === 'proficiency.grant') {
         if (member.kind === 'skill') acc.skillProficiencies.add(member.id as SkillId);
         else if (member.kind === 'tool') acc.toolProficiencies.add(member.id);
       } else {
@@ -1172,11 +1275,43 @@ function validateAndApply(
 
 }
 
+/**
+ * Which pools are part of a character's starting equipment.
+ *
+ * A kit pool is one authored under the family; a pool offered *by a pick from*
+ * one is part of the kit too, however deep — "a martial weapon and a shield"
+ * asks a second question, and a screen that filed that question under the
+ * class-choices step would send the player back a screen to answer it.
+ */
+function kitPools(offers: readonly OfferGrant[], selections: readonly Selection[]): ReadonlySet<string> {
+  const kit = new Set<string>();
+  for (const offer of offers) {
+    if (poolFamilyOf(offer.pool) === STARTING_EQUIPMENT_FAMILY) kit.add(offer.pool);
+  }
+  for (const selection of selections) {
+    if (poolFamilyOf(selection.pool) === STARTING_EQUIPMENT_FAMILY) kit.add(selection.pool);
+  }
+
+  // Then whatever those reach, to a fixed point. Bounded by the number of
+  // pools, so a cycle in content cannot loop forever.
+  for (let pass = 0; pass <= offers.length; pass += 1) {
+    let grew = false;
+    for (const offer of offers) {
+      if (offer.parent === null || !kit.has(offer.parent) || kit.has(offer.pool)) continue;
+      kit.add(offer.pool);
+      grew = true;
+    }
+    if (!grew) break;
+  }
+  return kit;
+}
+
 /** Every pool the character was offered or picked from, resolved for display. */
 function describeSelections(
   resolved: ReadonlyMap<string, ResolvedPool>,
   offers: readonly OfferGrant[],
   selections: readonly Selection[],
+  kit: ReadonlySet<string>,
 ): readonly DerivedSelection[] {
   const pools = new Set<string>();
   for (const offer of offers) pools.add(offer.pool);
@@ -1208,6 +1343,7 @@ function describeSelections(
       entitled: entry?.entitled ?? 0,
       candidates,
       picks: picksByPool.get(pool) ?? [],
+      kit: kit.has(pool),
     });
   }
   return out;

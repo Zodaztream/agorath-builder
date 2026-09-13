@@ -11,6 +11,7 @@
 import type { JSX } from 'preact';
 import type { CharacterDefinition, DerivedSheet } from '@agorath/engine';
 import { picksFor, setPicks } from '../../store.ts';
+import { classChoices } from '../../flow.ts';
 import { PoolPicker } from '../../components/pool-picker.tsx';
 
 export function ChoicesStep(props: {
@@ -21,7 +22,10 @@ export function ChoicesStep(props: {
   onChange: (definition: CharacterDefinition) => void;
 }): JSX.Element {
   const { definition, sheet, homes } = props;
-  const offered = sheet.selections.filter((selection) => selection.entitled > 0);
+  // The kit is a choice like any other, but it is asked on the Equipment step.
+  // `kit` is the engine's answer to which pools those are, so nothing here has
+  // to know a pool name.
+  const offered = classChoices(sheet).filter((selection) => selection.entitled > 0);
 
   if (offered.length === 0) {
     return (

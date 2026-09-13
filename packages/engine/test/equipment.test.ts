@@ -172,7 +172,9 @@ test('the first class keeps its kit when a second class is added', () => {
     'daggerx2 from rogue-equipment',
     "thieves-toolsx1 from rogue-equipment",
   ]);
-  assert.ok(!sheet.diagnostics.some((d) => d.includes('starting equipment')));
+  // The *second* class is the one that brings none, and it says so.
+  assert.ok(!sheet.diagnostics.some((d) => d.includes('Rogue starting equipment')));
+  assert.ok(sheet.diagnostics.some((d) => d.includes('Fighter starting equipment')));
 });
 
 test('a one-class character is never told about multiclassing', () => {
@@ -292,10 +294,131 @@ test('speed is floored at zero rather than going negative', () => {
 });
 
 test('a class with no equipment feature is not mistaken for one', () => {
-  // The fighter fixture grants no items, so the multiclass rule must not fire
-  // for it — it only suppresses features that actually hand something over.
+  // The monk fixture hands nothing over and offers no packages, so the
+  // multiclass rule must not fire for it — it suppresses what actually gives.
+  const sheet = derive(build({ levels: [at('rogue'), at('monk')] }), content);
+  assert.ok(!sheet.diagnostics.some((d) => d.includes('Monk starting equipment')));
+});
+
+// ---------------------------------------------------------------------------
+// A choice inside a choice
+// ---------------------------------------------------------------------------
+
+const fighterKit = (...picks: { pool: string; picks: string[] }[]): LevelEntry =>
+  at('fighter', { choices: picks.map((p) => pick(p.pool, ...p.picks)) });
+
+test('a package can ask a second question, and the engine raises it', () => {
+  const sheet = derive(build({
+    levels: [fighterKit({ pool: 'starting-equipment:fighter:weapons', picks: ['fighter-weapons-martial-shield'] })],
+  }), content);
+
+  // The shield arrives with the package...
+  assert.deepEqual(grantedIds(sheet), ['shieldx1 from fighter-weapons-martial-shield']);
+
+  // ...and the weapon it asks for is a pool of its own, unanswered.
+  const weapon = sheet.selections.find((s) => s.pool === 'weapon:martial');
+  assert.ok(weapon, JSON.stringify(sheet.selections.map((s) => s.pool)));
+  assert.equal(weapon.entitled, 1);
+  assert.equal(weapon.picks.length, 0);
+  assert.equal(weapon.label, 'Martial weapon');
+  assert.ok(weapon.candidates.some((c) => c.id === 'longsword'), 'the pack\'s martial weapons are the candidates');
+  assert.ok(!weapon.candidates.some((c) => c.id === 'shortbow'), 'a simple weapon is not a martial weapon');
+  // Unanswered is not an error: a half-built character is a normal state.
+  assert.deepEqual(sheet.diagnostics, []);
+});
+
+test('the second question is answered by a pick, which is the item', () => {
+  const sheet = derive(build({
+    levels: [fighterKit(
+      { pool: 'starting-equipment:fighter:weapons', picks: ['fighter-weapons-martial-shield'] },
+      { pool: 'weapon:martial', picks: ['greataxe'] },
+    )],
+  }), content);
+
+  assert.deepEqual(grantedIds(sheet), [
+    'shieldx1 from fighter-weapons-martial-shield',
+    'greataxex1 from weapon:martial',
+  ]);
+  assert.deepEqual(sheet.diagnostics, []);
+});
+
+test('"two martial weapons" is a count of two, not a second pool', () => {
+  const one = derive(build({
+    levels: [fighterKit({ pool: 'starting-equipment:fighter:weapons', picks: ['fighter-weapons-two'] })],
+  }), content);
+  const two = derive(build({
+    levels: [fighterKit(
+      { pool: 'starting-equipment:fighter:weapons', picks: ['fighter-weapons-two'] },
+      { pool: 'weapon:martial', picks: ['greataxe', 'longsword'] },
+    )],
+  }), content);
+
+  assert.equal(one.selections.find((s) => s.pool === 'weapon:martial')?.entitled, 2);
+  assert.equal(one.selections.find((s) => s.pool === 'weapon:martial')?.label, 'Martial weapons');
+  assert.deepEqual(grantedIds(two), ['greataxex1 from weapon:martial', 'longswordx1 from weapon:martial']);
+  assert.deepEqual(two.diagnostics, []);
+});
+
+test('the branch not taken asks nothing at all', () => {
+  const sheet = derive(build({
+    levels: [fighterKit(
+      { pool: 'starting-equipment:fighter:armour', picks: ['fighter-armour-leather'] },
+      { pool: 'starting-equipment:fighter:weapons', picks: ['fighter-weapons-two'] },
+      { pool: 'weapon:martial', picks: ['greataxe', 'longsword'] },
+    )],
+  }), content);
+
+  assert.deepEqual(grantedIds(sheet), [
+    'leatherx1 from fighter-armour-leather',
+    'longbowx1 from fighter-armour-leather',
+    'arrowsx20 from fighter-armour-leather',
+    'greataxex1 from weapon:martial',
+    'longswordx1 from weapon:martial',
+  ]);
+  // The (a) branch's shield was never offered, so nothing from it is granted.
+  assert.ok(!sheet.startingItems.some((g) => g.item === 'shield'));
+});
+
+test('a weapon that is not in the pool is diagnosed, not granted', () => {
+  const sheet = derive(build({
+    levels: [fighterKit(
+      { pool: 'starting-equipment:fighter:weapons', picks: ['fighter-weapons-two'] },
+      { pool: 'weapon:martial', picks: ['greataxe', 'shortbow'] },
+    )],
+  }), content);
+
+  assert.ok(
+    sheet.diagnostics.some((d) => d.includes('shortbow') && d.includes('weapon:martial')),
+    JSON.stringify(sheet.diagnostics),
+  );
+  assert.ok(!sheet.startingItems.some((g) => g.item === 'shortbow'));
+});
+
+test('a question the kit asked belongs to the kit, not to the class choices', () => {
+  const sheet = derive(build({
+    levels: [fighterKit({ pool: 'starting-equipment:fighter:weapons', picks: ['fighter-weapons-martial-shield'] })],
+  }), content);
+
+  assert.equal(sheet.selections.find((s) => s.pool === 'weapon:martial')?.kit, true);
+  assert.equal(sheet.selections.find((s) => s.pool === 'starting-equipment:fighter:weapons')?.kit, true);
+  assert.equal(sheet.selections.find((s) => s.pool === 'fighting-style')?.kit, false);
+  assert.equal(sheet.selections.find((s) => s.pool === 'skill:fighter')?.kit, false);
+});
+
+test('a kit that is all choices is still a kit, and still not granted to a second class', () => {
+  // The fighter's kit has no unconditional item in it at all, so recognising
+  // the feature by the packages it offers rather than by a grant is what makes
+  // this work.
   const sheet = derive(build({ levels: [at('rogue'), at('fighter')] }), content);
-  assert.ok(!sheet.diagnostics.some((d) => d.includes('Fighter starting equipment')));
+
+  assert.ok(
+    sheet.diagnostics.some((d) => d.includes('Fighter starting equipment') && d.includes('multiclass')),
+    JSON.stringify(sheet.diagnostics),
+  );
+  // The first class's packages are still offered — the player may yet choose
+  // one — while the suppressed class's are not offered at all.
+  assert.ok(sheet.selections.some((s) => s.pool === 'starting-equipment:rogue:pack' && s.kit));
+  assert.ok(!sheet.selections.some((s) => s.pool.startsWith('starting-equipment:fighter')));
 });
 
 /** Guards the helper above against a fixture rename quietly disabling a test. */

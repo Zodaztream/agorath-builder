@@ -72,12 +72,16 @@ test('the first level of a class reports its features, its offers and its hit di
   assert.equal(preview.hitDie, 10);
 
   const features = gainsOf(preview.gains, 'feature').map((g) => g.name);
-  assert.deepEqual(features, ['Proficiencies', 'Skills', 'Fighting Style', 'Second Wind']);
+  assert.deepEqual(features, ['Proficiencies', 'Skills', 'Fighting Style', 'Second Wind', 'Equipment']);
 
-  // Two pools open at 1st level, and each says how many picks it adds.
+  // Four pools open at 1st level, and each says how many picks it adds. Two are
+  // the class's own choices; two are the kit it starts with (ADR-0013), which a
+  // first level asks for and a second one does not.
   assert.deepEqual(preview.offers.map((o) => [o.pool, o.count]), [
     ['skill:fighter', 2],
     ['fighting-style', 1],
+    ['starting-equipment:fighter:armour', 1],
+    ['starting-equipment:fighter:weapons', 1],
   ]);
 
   // At 1st level the die is taken at its maximum, not its average.

@@ -1,57 +1,39 @@
 /**
- * Choose your equipment.
+ * What the character starts with.
  *
- * The step where the character starts producing numbers. Every card states what
- * the item *does* — a weapon's damage and properties, armour's base AC and how
- * much DEX it allows — and the panel at the top moves as things are added, so
- * the connection between "I picked chain mail" and "my Armour Class is 18" is
- * visible rather than inferred.
+ * A step, not a catalogue. The book gives a class a list of packages and a few
+ * fixed items — "chain mail, or leather and a longbow and 20 arrows" — and this
+ * asks for those and nothing else. The item list a player browses for a blade
+ * the DM handed out is on the sheet, because that is a mid-campaign act rather
+ * than a step in making a 1st-level character (ADR-0013).
  *
- * Starting-equipment packages ("a longsword, a shield, and one of the following")
- * are **not** in the pack format yet, so this offers the list and says so rather
- * than inventing the packages.
+ * Every card is the pack's own sentence about a package, and the panel at the
+ * top moves as packages are taken, so the connection between "I took the chain
+ * mail" and "my Armour Class is 16" is visible rather than inferred.
  */
 
-import { useState } from 'preact/hooks';
 import type { JSX } from 'preact';
 import {
-  DAMAGE_TYPES,
   type CharacterDefinition,
   type ContentProvider,
-  type DamageType,
   type DerivedSheet,
-  type InventoryItem,
-  type ItemEntry,
 } from '@agorath/engine';
-import type { PackCatalog } from '@agorath/content';
-import { addItem, removeItem, setItem } from '../../store.ts';
-import { signed, titleCase } from '../../text.ts';
-import { Card, CardGrid } from '../../components/cards.tsx';
-import { Field, Stat } from '../../ui.tsx';
+import { kitChoices } from '../../flow.ts';
+import { picksFor, setPicks } from '../../store.ts';
+import { PoolPicker } from '../../components/pool-picker.tsx';
+import { Stat } from '../../ui.tsx';
 
 export function EquipmentStep(props: {
   definition: CharacterDefinition;
   content: ContentProvider;
-  catalog: PackCatalog;
   sheet: DerivedSheet;
+  /** The level entry each pool's picks belong on, from the engine's own view. */
+  homes: ReadonlyMap<string, number>;
   onChange: (definition: CharacterDefinition) => void;
 }): JSX.Element {
-  const { definition, content, catalog, sheet, onChange } = props;
+  const { definition, content, sheet, homes, onChange } = props;
 
-  const held = new Map<string, number>();
-  definition.inventory.forEach((item, index) => held.set(item.item, index));
-
-  const toggle = (itemId: string): void => {
-    const index = held.get(itemId);
-    if (index === undefined) {
-      const item: InventoryItem = { item: itemId, quantity: 1, equipped: true, attuned: false, custom: null };
-      onChange(addItem(definition, item));
-    } else {
-      onChange(removeItem(definition, index));
-    }
-  };
-
-  const groups = groupItems(catalog, content);
+  const kit = kitChoices(sheet).filter((selection) => selection.entitled > 0);
 
   return (
     <>
@@ -65,275 +47,121 @@ export function EquipmentStep(props: {
         />
       </div>
 
-      <p class="muted">
-        Click an item to take it; click it again to put it down. Equipped weapons become attack lines
-        on the sheet and worn armour sets your Armour Class. Starting-equipment packages are not in
-        the pack format yet, so there is nothing here that says what a class starts with — take what
-        your table agrees on.
-      </p>
-
-      {groups.map((group) => (
-        <section class="equip-group" key={group.title}>
-          <h3>{group.title}</h3>
-          <CardGrid>
-            {group.entries.map(({ entry, item }) => (
-              <Card
-                key={entry.id}
-                title={entry.name}
-                summary={item.summary}
-                facts={itemFacts(item)}
-                selected={held.has(entry.id)}
-                onSelect={() => toggle(entry.id)}
-              />
-            ))}
-            {group.entries.length === 0 && <p class="muted">Nothing of this kind in the loaded pack.</p>}
-          </CardGrid>
-        </section>
-      ))}
-
-      <section class="equip-group">
-        <h3>Carrying</h3>
-        <table class="items">
-          <thead>
-            <tr><th>Item</th><th class="num">Qty</th><th>Equipped</th><th>Attuned</th><th /></tr>
-          </thead>
-          <tbody>
-            {definition.inventory.map((carried, index) => {
-              const name = carried.custom?.name ?? content.item(carried.item)?.name ?? carried.item;
-              const needsAttunement = content.item(carried.item)?.requiresAttunement ?? false;
-              return (
-                <tr key={index}>
-                  <td>
-                    {name}
-                    {carried.custom !== null && <span class="badge">custom</span>}
-                    {needsAttunement && <span class="badge">attunement</span>}
-                  </td>
-                  <td class="num">
-                    <input
-                      type="number"
-                      min={0}
-                      value={carried.quantity}
-                      onInput={(event) => onChange(setItem(definition, index, { quantity: Number(event.currentTarget.value) }))}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={carried.equipped}
-                      onChange={(event) => onChange(setItem(definition, index, { equipped: event.currentTarget.checked }))}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={carried.attuned}
-                      onChange={(event) => onChange(setItem(definition, index, { attuned: event.currentTarget.checked }))}
-                    />
-                  </td>
-                  <td>
-                    <button type="button" class="link" onClick={() => onChange(removeItem(definition, index))}>put down</button>
-                  </td>
-                </tr>
-              );
-            })}
-            {definition.inventory.length === 0 && (
-              <tr><td colSpan={5} class="muted">Carrying nothing yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-        <p class="muted">
-          Attunement is capped at three items by the rules, and the sheet says so if you go past it.
-        </p>
-      </section>
-
-      <CustomItemForm definition={definition} content={content} catalog={catalog} onChange={onChange} />
+      {kit.length === 0 ? (
+        <NoKit definition={definition} sheet={sheet} />
+      ) : (
+        <>
+          {kit.map((selection) => (
+            <PoolPicker
+              key={selection.pool}
+              selection={selection}
+              count={selection.entitled}
+              picks={picksFor(definition, selection.pool)}
+              onChange={(picks) => {
+                const home = homes.get(selection.pool) ?? 0;
+                onChange(setPicks(definition, home, selection.pool, picks));
+              }}
+            />
+          ))}
+          <Received definition={definition} sheet={sheet} content={content} />
+        </>
+      )}
     </>
   );
 }
 
-type GroupedEntry = { readonly entry: { readonly id: string; readonly name: string }; readonly item: ItemEntry };
-
-interface Grouped {
-  readonly title: string;
-  readonly entries: readonly GroupedEntry[];
-}
-
 /**
- * The packs are long — twenty-six weapons in the pilot slice alone — and a
- * single wall of cards is not a choice anybody can weigh. So they are split by
- * what the entries *say they are*: a weapon's own `category`, an armour's own
- * `kind`. That is derived, not authored, and a pack that adds a category shows
- * up as its own group.
- */
-function groupItems(catalog: PackCatalog, content: ContentProvider): readonly Grouped[] {
-  const groups = new Map<string, GroupedEntry[]>();
-  const add = (title: string, entry: GroupedEntry): void => {
-    const bucket = groups.get(title);
-    if (bucket === undefined) groups.set(title, [entry]);
-    else bucket.push(entry);
-  };
-
-  for (const entry of catalog.items) {
-    const item = content.item(entry.id);
-    if (item === null) continue;
-    const grouped = { entry, item };
-
-    if (item.weapon !== null) {
-      add(item.weapon.category === 'martial' ? 'Martial weapons' : 'Simple weapons', grouped);
-    } else if (item.armor !== null) {
-      const kind = item.armor.kind;
-      add(kind === 'shield' ? 'Shields' : `${titleCase(kind)} armour`, grouped);
-    } else {
-      add('Other gear', grouped);
-    }
-  }
-
-  // Weapons first, then armour by weight, then the rest: the order a character
-  // is actually equipped in.
-  const ORDER = ['Simple weapons', 'Martial weapons', 'Light armour', 'Medium armour', 'Heavy armour', 'Shields', 'Other gear'];
-  return ORDER.filter((title) => groups.has(title)).map((title) => ({ title, entries: groups.get(title) ?? [] }));
-}
-
-/** What an item does, as facts on its card. */
-function itemFacts(item: ItemEntry): readonly { readonly label: string; readonly value: string }[] {
-  if (item.weapon !== null) {
-    const weapon = item.weapon;
-    const damage = `${weapon.damage.count}d${weapon.damage.die}${weapon.versatile === null ? '' : ` (${weapon.versatile.count}d${weapon.versatile.die} two-handed)`}`;
-    const reach = weapon.melee && weapon.ranged ? 'melee or thrown' : weapon.ranged ? 'ranged' : 'melee';
-    return [
-      { label: 'Damage', value: `${damage} ${weapon.damageType}` },
-      { label: 'Used', value: reach },
-      ...(weapon.properties.length === 0 ? [] : [{ label: 'Properties', value: weapon.properties.join(', ') }]),
-    ];
-  }
-
-  if (item.armor !== null) {
-    const armor = item.armor;
-    const dex = armor.kind === 'shield' ? 'held, +2 AC' : armor.maxDex === null ? 'DEX added in full' : armor.maxDex === 0 ? 'DEX ignored' : `DEX up to ${signed(armor.maxDex)}`;
-    return [
-      { label: 'Armour class', value: `${armor.baseAc}` },
-      { label: 'Dexterity', value: dex },
-    ];
-  }
-
-  return item.requiresAttunement ? [{ label: 'Requires', value: 'attunement' }] : [];
-}
-
-/**
- * A player-authored item, built on a real base.
+ * Why there is nothing to choose.
  *
- * The base is what makes this safe: choosing a longsword supplies the damage
- * die, weight and properties, so the mundane half of the item can never be
- * wrong. Only the parts a player invents are typed.
+ * Three different situations look identical from here, and saying which one it
+ * is saves the player hunting for a bug that is not there.
  */
-function CustomItemForm(props: {
+function NoKit(props: {
   definition: CharacterDefinition;
-  content: ContentProvider;
-  catalog: PackCatalog;
-  onChange: (definition: CharacterDefinition) => void;
+  sheet: DerivedSheet;
 }): JSX.Element {
-  const { content, catalog, definition, onChange } = props;
-  const [name, setName] = useState('');
-  const [base, setBase] = useState('');
-  const [hit, setHit] = useState(0);
-  const [bonus, setBonus] = useState(0);
-  const [count, setCount] = useState(0);
-  const [die, setDie] = useState(6);
-  const [damageType, setDamageType] = useState<DamageType>('fire');
+  const { definition, sheet } = props;
 
-  // Only something with mundane statistics to inherit can be a base.
-  const bases = catalog.items.filter((entry) => {
-    const item = content.item(entry.id);
-    return item !== null && (item.weapon !== null || item.armor !== null);
-  });
+  if (definition.levels.length === 0) {
+    return (
+      <p class="muted">
+        Nothing to choose yet. A class decides what its members start with — pick one on the Class
+        step and its equipment will appear here.
+      </p>
+    );
+  }
 
-  const chosenBase = base === '' ? bases[0]?.id ?? '' : base;
+  const suppressed = sheet.diagnostics.some((d) => d.includes('starting equipment is not granted'));
+  if (suppressed) {
+    return (
+      <p class="muted">
+        Your first class brings the equipment, and this character's first class is not one of the
+        loaded pack's — or a later class is the one with a kit. A multiclass character takes
+        equipment from their first class only, which the sheet explains.
+      </p>
+    );
+  }
 
   return (
-    <details class="custom">
-      <summary>Make a custom item</summary>
+    <p class="muted">
+      The loaded pack does not say what this class starts with. That is a gap in the pack rather
+      than a choice you are missing; add what your table agrees on from the Sheet tab.
+    </p>
+  );
+}
+
+/**
+ * What has actually been handed over.
+ *
+ * A package says what it contains on its own card, but the fixed items — a
+ * rogue's leather armour, two daggers and thieves' tools — were never a choice
+ * and would otherwise arrive invisibly. This is the list of everything that
+ * did, and the reason the inventory has anything in it at all.
+ */
+function Received(props: {
+  definition: CharacterDefinition;
+  sheet: DerivedSheet;
+  content: ContentProvider;
+}): JSX.Element | null {
+  const { sheet, content } = props;
+  if (sheet.startingItems.length === 0) return null;
+
+  const bySource = new Map<string, { item: string; quantity: number }[]>();
+  for (const granted of sheet.startingItems) {
+    const bucket = bySource.get(granted.grantedBy) ?? [];
+    bucket.push({ item: granted.item, quantity: granted.quantity });
+    bySource.set(granted.grantedBy, bucket);
+  }
+
+  const nameOf = (id: string): string => {
+    const entry = content.item(id);
+    if (entry !== null) return entry.name;
+    const option = content.option(id);
+    return option === null ? id : option.name;
+  };
+
+  return (
+    <section class="equip-group">
+      <h3>You are carrying</h3>
+      <ul class="carried">
+        {[...bySource].map(([source, items]) => (
+          <li key={source}>
+            <span class="muted">{nameOf(source)}</span>
+            <ul>
+              {items.map((line) => (
+                <li key={line.item}>
+                  {nameOf(line.item)}
+                  {line.quantity > 1 && <span class="badge">×{line.quantity}</span>}
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
       <p class="muted">
-        The tool's answer to "the DM handed me a +2 flaming longsword". Built on a real base item, so
-        the mundane statistics come from the pack rather than from typing. Balance is your table's
-        business; the tool computes.
+        Everything here is on the sheet, where you can equip it, put it down, or add what you pick
+        up along the way.
       </p>
-      <div class="grid">
-        <Field label="Item name">
-          <input
-            type="text"
-            value={name}
-            placeholder="Vesaria's Fang"
-            onInput={(event) => setName(event.currentTarget.value)}
-          />
-        </Field>
-        <Field label="Base">
-          <select value={chosenBase} onChange={(event) => setBase(event.currentTarget.value)}>
-            {bases.map((entry) => (
-              <option value={entry.id} key={entry.id}>{entry.name}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Bonus to hit">
-          <input type="number" value={hit} onInput={(event) => setHit(Number(event.currentTarget.value))} />
-        </Field>
-        <Field label="Bonus to damage">
-          <input type="number" value={bonus} onInput={(event) => setBonus(Number(event.currentTarget.value))} />
-        </Field>
-        <Field label="Extra damage dice">
-          <input type="number" min={0} max={10} value={count} onInput={(event) => setCount(Number(event.currentTarget.value))} />
-        </Field>
-        <Field label="Die">
-          <select value={die} onChange={(event) => setDie(Number(event.currentTarget.value))}>
-            {[4, 6, 8, 10, 12].map((size) => (
-              <option value={size} key={size}>d{size}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Damage type">
-          <select value={damageType} onChange={(event) => setDamageType(event.currentTarget.value as DamageType)}>
-            {DAMAGE_TYPES.map((type) => (
-              <option value={type} key={type}>{type}</option>
-            ))}
-          </select>
-        </Field>
-      </div>
-      <button
-        type="button"
-        disabled={chosenBase === ''}
-        onClick={() => {
-          const id = `custom-${Date.now().toString(36)}`;
-          const label = name.trim() === '' ? 'Custom item' : name.trim();
-          const item: InventoryItem = {
-            item: id,
-            quantity: 1,
-            equipped: true,
-            attuned: false,
-            custom: {
-              id,
-              name: label,
-              tier: 'custom',
-              base: chosenBase === '' ? null : chosenBase,
-              effects: [
-                ...(hit === 0 ? [] : [{ shape: 'attack.bonus' as const, amount: hit }]),
-                ...(bonus === 0 ? [] : [{ shape: 'damage.bonus' as const, amount: bonus }]),
-                ...(count === 0 ? [] : [{
-                  shape: 'damage.dice' as const,
-                  dice: { count, die },
-                  damageType,
-                  label,
-                }]),
-              ],
-            },
-          };
-          onChange(addItem(definition, item));
-          setName('');
-          setHit(0);
-          setBonus(0);
-          setCount(0);
-        }}
-      >
-        Add to inventory
-      </button>
-    </details>
+    </section>
   );
 }

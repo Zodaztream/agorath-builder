@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 
 import { derive, inMemoryContent, type AbilityScores, type CharacterDefinition, type LevelEntry } from '@agorath/engine';
 import { ALL_CLASSES, ALL_FEATS, ALL_ITEMS, ALL_OPTIONS, ALL_SUBCLASSES, human, soldier } from '../../engine/test/fixtures.ts';
-import { STEPS, firstOpenStep, outstanding, satisfied, settled, stepStatuses, type FlowContext, type StepId } from '../src/flow.ts';
+import { STEPS, classChoices, firstOpenStep, kitChoices, outstanding, satisfied, settled, stepStatuses, type FlowContext, type StepId } from '../src/flow.ts';
 import { seedFor } from '../src/abilities.ts';
 
 const content = inMemoryContent({
@@ -84,7 +84,7 @@ test('the rail says what the character has, not just whether it is done', () => 
   assert.equal(note(ctx, 'background'), 'not chosen yet');
   assert.equal(note(ctx, 'choices'), '0 of 3 chosen', 'two skills and a fighting style');
   assert.equal(note(ctx, 'character'), 'level 2');
-  assert.equal(note(ctx, 'equipment'), 'nothing carried');
+  assert.equal(note(ctx, 'equipment'), '0 of 2 chosen', "the fighter's kit: armour and weapons");
 });
 
 test('multiclassing reads as two classes, not as one', () => {
@@ -96,8 +96,9 @@ test('the final step summarises the levels and what is still open', () => {
   const ctx = context(character({ levels: [level('fighter')] }));
   const open = outstanding(ctx).map((item) => item.step);
 
-  // Each unfilled pool is its own line, because each is its own decision.
-  assert.deepEqual(open, ['race', 'background', 'choices', 'choices']);
+  // Each unfilled pool is its own line, because each is its own decision — and
+  // a kit question points at the Equipment step, which is where it is answered.
+  assert.deepEqual(open, ['race', 'background', 'choices', 'choices', 'equipment', 'equipment']);
 
   const texts = outstanding(ctx).map((item) => item.text);
   assert.deepEqual(texts, [
@@ -105,39 +106,60 @@ test('the final step summarises the levels and what is still open', () => {
     'Choose a background.',
     'Skills: 0 of 2 chosen.',
     'Fighting Style: 0 of 1 chosen.',
+    'Armour: 0 of 1 chosen.',
+    'Weapons: 0 of 1 chosen.',
   ]);
 });
 
+/** A fighter with every decision made, kit included — a legal 1st-level one. */
+const finishedFighter = (): CharacterDefinition => character({
+  race: 'human',
+  background: 'soldier',
+  levels: [level('fighter', [
+    { kind: 'select', pool: 'skill:fighter', picks: ['athletics', 'perception'] },
+    { kind: 'select', pool: 'fighting-style', picks: ['fighting-style-archery'] },
+    { kind: 'select', pool: 'starting-equipment:fighter:armour', picks: ['fighter-armour-chain-mail'] },
+    { kind: 'select', pool: 'starting-equipment:fighter:weapons', picks: ['fighter-weapons-two'] },
+    { kind: 'select', pool: 'weapon:martial', picks: ['greataxe', 'longsword'] },
+  ])],
+});
+
 test('a character with everything decided has nothing outstanding', () => {
-  const definition = character({
-    race: 'human',
-    background: 'soldier',
-    levels: [level('fighter', [
-      { kind: 'select', pool: 'skill:fighter', picks: ['athletics', 'perception'] },
-      { kind: 'select', pool: 'fighting-style', picks: ['fighting-style-archery'] },
-    ])],
-  });
+  const definition = finishedFighter();
 
   assert.deepEqual(outstanding(context(definition)), []);
 
   const ctx = context(definition);
   const statuses = stepStatuses(ctx);
-  assert.deepEqual(statuses.filter((s) => !s.settled).map((s) => s.step.id), ['equipment']);
+  assert.deepEqual(statuses.filter((s) => !s.settled).map((s) => s.step.id), []);
 });
 
 test('resuming lands on the first step that is neither done nor visited', () => {
   const ctx = context(character({ levels: [level('fighter')] }), ['class']);
   assert.equal(firstOpenStep(ctx), 'race');
 
-  const finished = context(character({
-    race: 'human',
-    background: 'soldier',
+  assert.equal(firstOpenStep(context(finishedFighter())), 'character');
+});
+
+test('a kit is a choice, and it is asked for on the equipment step', () => {
+  // The split is the engine's answer (`selection.kit`), not a pool name spelled
+  // out here — including the question a package asks in its turn.
+  const sheet = derive(character({
     levels: [level('fighter', [
-      { kind: 'select', pool: 'skill:fighter', picks: ['athletics', 'perception'] },
-      { kind: 'select', pool: 'fighting-style', picks: ['fighting-style-archery'] },
+      { kind: 'select', pool: 'starting-equipment:fighter:weapons', picks: ['fighter-weapons-martial-shield'] },
     ])],
-  }));
-  assert.equal(firstOpenStep(finished), 'equipment');
+  }), content);
+
+  const kit = kitChoices(sheet).map((selection) => selection.pool);
+  const classOnly = classChoices(sheet).map((selection) => selection.pool);
+
+  assert.deepEqual(kit, [
+    'starting-equipment:fighter:armour',
+    'starting-equipment:fighter:weapons',
+    'weapon:martial',
+  ]);
+  assert.ok(!classOnly.includes('starting-equipment:fighter:weapons'), 'the kit is not a class choice');
+  assert.ok(classOnly.includes('skill:fighter') && classOnly.includes('fighting-style'));
 });
 
 test('the ability step is settled by its own method\'s rule', () => {

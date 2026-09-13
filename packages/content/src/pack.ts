@@ -527,8 +527,8 @@ function checkEffectFields(
         }
         for (const grant of grants) {
           const shape = isObject(grant) ? asString(grant['shape']) : '';
-          if (shape !== 'proficiency.grant' && shape !== 'proficiency.expertise') {
-            errors.push(`${where}: "${shape || 'a grant'}" cannot be a grant — only proficiency.grant and proficiency.expertise take their ids from the picks.`);
+          if (!GRANT_SHAPES.has(shape)) {
+            errors.push(`${where}: "${shape || 'a grant'}" cannot be a grant — only ${[...GRANT_SHAPES].join(', ')} take their ids from the picks.`);
           }
         }
       } else if (grants.length > 0) {
@@ -644,8 +644,19 @@ function readItem(
 // Cross-entry checks — the ones a single entry cannot make
 // ---------------------------------------------------------------------------
 
-/** Pool families the engine provides itself, so the pack need not author them. */
-const ENGINE_POOL_FAMILIES: readonly string[] = ['skill', 'proficient', 'subclass'];
+/**
+ * Pool families the engine provides itself, so the pack need not author them.
+ * A pool in one of these holds bare ids, which is why its offer must say what a
+ * pick confers — see the check in `checkEffect`.
+ */
+const ENGINE_POOL_FAMILIES: readonly string[] = ['skill', 'proficient', 'subclass', 'weapon'];
+
+/** The shapes a `choice.offer` may name in `grants` (ADR-0009, ADR-0013). */
+const GRANT_SHAPES: ReadonlySet<string> = new Set([
+  'proficiency.grant',
+  'proficiency.expertise',
+  'inventory.grant',
+]);
 
 /** `skill:fighter` → `skill`; `fighting-style` → `fighting-style`. */
 function poolFamily(pool: string): string {

@@ -45,6 +45,13 @@ export const fighter: ClassEntry = {
     { id: 'fighter-second-wind', name: 'Second Wind', level: 1, summary: 'Fixture: regain hit points as a bonus action, once per rest.', effects: [] },
     { id: 'fighter-action-surge', name: 'Action Surge', level: 2, summary: 'Fixture: take one extra action, once per rest.', effects: [] },
     { id: 'fighter-extra-attack', name: 'Extra Attack', level: 5, summary: 'Fixture: attack twice with the Attack action.', effects: [{ shape: 'attack.count', value: 1 }] },
+    // The kit with a choice inside a choice: (a) hands over a shield *and* asks
+    // which martial weapon, (b) asks for two. That second question has no entry
+    // to live on, so it is an offer the picked option creates.
+    { id: 'fighter-equipment', name: 'Equipment', level: 1, summary: 'Fixture: what a fighter starts with.', effects: [
+      { shape: 'choice.offer', pool: 'starting-equipment:fighter:armour', label: 'Armour', count: 1, from: null, grants: [] },
+      { shape: 'choice.offer', pool: 'starting-equipment:fighter:weapons', label: 'Weapons', count: 1, from: null, grants: [] },
+    ] },
   ],
 };
 
@@ -233,6 +240,45 @@ export const brokenPack: OptionEntry = {
   effects: [{ shape: 'inventory.grant', items: [{ item: 'no-such-item', quantity: 1 }] }],
 };
 
+export const fighterArmourChainMail: OptionEntry = {
+  id: 'fighter-armour-chain-mail', name: 'Chain mail', pool: 'starting-equipment:fighter:armour',
+  summary: 'Fixture: heavy armour.',
+  prerequisites: [],
+  effects: [{ shape: 'inventory.grant', items: [{ item: 'chain-mail', quantity: 1 }] }],
+};
+
+export const fighterArmourLeather: OptionEntry = {
+  id: 'fighter-armour-leather', name: 'Leather, a longbow and 20 arrows', pool: 'starting-equipment:fighter:armour',
+  summary: 'Fixture: light armour and a bow.',
+  prerequisites: [],
+  effects: [{ shape: 'inventory.grant', items: [
+    { item: 'leather', quantity: 1 },
+    { item: 'longbow', quantity: 1 },
+    { item: 'arrows', quantity: 20 },
+  ] }],
+};
+
+export const fighterWeaponsMartialShield: OptionEntry = {
+  id: 'fighter-weapons-martial-shield', name: 'A martial weapon and a shield', pool: 'starting-equipment:fighter:weapons',
+  summary: 'Fixture: a shield, and one martial weapon of your choice.',
+  prerequisites: [],
+  effects: [
+    { shape: 'inventory.grant', items: [{ item: 'shield', quantity: 1 }] },
+    { shape: 'choice.offer', pool: 'weapon:martial', label: 'Martial weapon', count: 1, from: null,
+      grants: [{ shape: 'inventory.grant' }] },
+  ],
+};
+
+export const fighterWeaponsTwo: OptionEntry = {
+  id: 'fighter-weapons-two', name: 'Two martial weapons', pool: 'starting-equipment:fighter:weapons',
+  summary: 'Fixture: two martial weapons of your choice.',
+  prerequisites: [],
+  effects: [
+    { shape: 'choice.offer', pool: 'weapon:martial', label: 'Martial weapons', count: 2, from: null,
+      grants: [{ shape: 'inventory.grant' }] },
+  ],
+};
+
 /**
  * The trap: "extra-attack" is Extra Attack's *name*, not its id, and
  * `hasFeature()` resolves ids. This prerequisite can never be met, which is
@@ -332,6 +378,7 @@ export const longsword = weapon('longsword', 'Longsword', 'martial', { count: 1,
 export const greataxe = weapon('greataxe', 'Greataxe', 'martial', { count: 1, die: 12 }, 'slashing', [], {});
 export const dagger = weapon('dagger', 'Dagger', 'simple', { count: 1, die: 4 }, 'piercing', ['finesse', 'light'], {});
 export const shortbow = weapon('shortbow', 'Shortbow', 'simple', { count: 1, die: 6 }, 'piercing', [], { ranged: true });
+export const longbow = weapon('longbow', 'Longbow', 'martial', { count: 1, die: 8 }, 'piercing', ['two-handed'], { ranged: true });
 
 /** A magic weapon: its bonuses belong to it, not to whatever else is held. */
 export const longswordPlus1: ItemEntry = {
@@ -368,9 +415,14 @@ const gear = (id: string, name: string): ItemEntry => ({
 export const thievesTools = gear('thieves-tools', "Thieves' Tools");
 export const burglarsPack = gear('burglars-pack', "Burglar's Pack");
 export const explorersPack = gear('explorers-pack', "Explorer's Pack");
+export const arrows = gear('arrows', 'Arrows');
 
 export const ALL_CLASSES = [fighter, rogue, barbarian, monk, bard, wizard, paladin, warlock, cleric];
 export const ALL_SUBCLASSES = [champion];
-export const ALL_OPTIONS = [archery, defense, agonizingBlast, eldritchSpear, nameTrap, burglarPack, explorerPack];
-export const ALL_ITEMS = [longsword, longswordPlus1, greataxe, dagger, shortbow, cloakOfProtection, chainMail, plateArmor, scaleMail, studdedLeather, leatherArmor, shield, thievesTools, burglarsPack, explorersPack];
+export const ALL_OPTIONS = [
+  archery, defense, agonizingBlast, eldritchSpear, nameTrap,
+  burglarPack, explorerPack,
+  fighterArmourChainMail, fighterArmourLeather, fighterWeaponsMartialShield, fighterWeaponsTwo,
+];
+export const ALL_ITEMS = [longsword, longswordPlus1, greataxe, dagger, shortbow, longbow, cloakOfProtection, chainMail, plateArmor, scaleMail, studdedLeather, leatherArmor, shield, thievesTools, burglarsPack, explorersPack, arrows];
 export const ALL_FEATS = [tough, tavernBrawler, grappler];

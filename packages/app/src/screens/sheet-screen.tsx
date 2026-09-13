@@ -11,13 +11,18 @@
  */
 
 import type { JSX } from 'preact';
-import { ABILITY_NAMES, type CharacterDefinition, type DerivedSheet } from '@agorath/engine';
+import { ABILITY_NAMES, type CharacterDefinition, type ContentProvider, type DerivedSheet } from '@agorath/engine';
+import type { PackCatalog } from '@agorath/content';
 import { Notice, Panel, Stat, diceText, signed } from '../ui.tsx';
+import { InventoryPanel } from '../components/inventory.tsx';
 
 export function SheetScreen(props: {
   definition: CharacterDefinition;
+  content: ContentProvider;
+  catalog: PackCatalog;
   sheet: DerivedSheet;
   packLabel: string;
+  onChange: (definition: CharacterDefinition) => void;
   onExport: () => void;
   onImport: (file: File) => void;
 }): JSX.Element {
@@ -193,6 +198,18 @@ export function SheetScreen(props: {
           {sheet.notes.length === 0 && <li class="muted">No features yet.</li>}
         </ul>
       </Panel>
+
+      {/* Consequences, not faults: anyone may wear armour they are not
+          proficient with, and the sheet says what it costs rather than
+          refusing it (PHB 144). */}
+      <Notice tone="warning" title="What your armour does" items={sheet.armorNotes} />
+
+      <InventoryPanel
+        definition={definition}
+        content={props.content}
+        catalog={props.catalog}
+        onChange={props.onChange}
+      />
 
       <Panel title="Save this character" hint="Export is the real save: the browser's copy can be cleared, a file cannot.">
         <div class="row">

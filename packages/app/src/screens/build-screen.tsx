@@ -185,8 +185,8 @@ export function BuildScreen(props: {
           <EquipmentStep
             definition={definition}
             content={content}
-            catalog={catalog}
             sheet={sheet}
+            homes={homes}
             onChange={onChange}
           />
         )}

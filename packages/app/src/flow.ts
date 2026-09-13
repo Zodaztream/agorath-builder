@@ -16,7 +16,7 @@
  * than a form that refuses to move.
  */
 
-import type { CharacterDefinition, DerivedSheet, AbilityMethod } from '@agorath/engine';
+import type { CharacterDefinition, DerivedSelection, DerivedSheet, AbilityMethod } from '@agorath/engine';
 import { isStandardArray, pointsSpent, POINT_BUY_BUDGET } from './abilities.ts';
 import { titleCase } from './text.ts';
 
@@ -77,9 +77,9 @@ export const STEPS: readonly StepDefinition[] = [
   {
     id: 'equipment',
     short: 'Equipment',
-    title: 'Choose your equipment',
+    title: 'Choose your starting equipment',
     blurb:
-      'What you carry. Armour sets your Armour Class and weapons become attack lines on the sheet, so this is where the numbers start to look like a character.',
+      'What your class and background hand you at the start. Armour sets your Armour Class and weapons become attack lines on the sheet, so this is where the numbers start to look like a character. Anything you pick up later goes on the sheet.',
   },
   {
     id: 'character',
@@ -123,9 +123,15 @@ export function satisfied(id: StepId, ctx: FlowContext): boolean {
     case 'abilities':
       return abilityStepSettled(definition);
     case 'choices':
-      return sheet.selections.every((selection) => selection.picks.length >= selection.entitled);
+      return classChoices(sheet).every((selection) => selection.picks.length >= selection.entitled);
     case 'equipment':
-      return definition.inventory.length > 0;
+      // Settled when every question the kit asks has an answer — including the
+      // one a package asks in its turn, "a martial weapon and a shield" being
+      // two questions and not one. A character whose class brings no kit at all
+      // (a second class never does) falls back to "carrying something".
+      return kitChoices(sheet).length > 0
+        ? kitChoices(sheet).every((selection) => selection.picks.length >= selection.entitled)
+        : definition.inventory.length > 0;
     case 'character':
       return true;
   }
@@ -158,6 +164,23 @@ export function abilityStepSettled(definition: CharacterDefinition): boolean {
     return spent !== null && spent <= POINT_BUY_BUDGET;
   }
   return Object.values(definition.abilities).some((score) => score !== 10);
+}
+
+/**
+ * The two halves of `sheet.selections`, split by what they are.
+ *
+ * A starting kit is a choice like any other — a rogue picks a pack the way a
+ * fighter picks a fighting style — but it is asked and answered on the Equipment
+ * step, and the engine marks the pools that belong to it (`kit`), including the
+ * ones a package asks in its turn. Without the split, "Armour: 0 of 1 chosen"
+ * would appear on the Choices step, which is not where the armour is.
+ */
+export function classChoices(sheet: DerivedSheet): readonly DerivedSelection[] {
+  return sheet.selections.filter((selection) => !selection.kit);
+}
+
+export function kitChoices(sheet: DerivedSheet): readonly DerivedSelection[] {
+  return sheet.selections.filter((selection) => selection.kit);
 }
 
 export interface StepStatus {
@@ -199,13 +222,17 @@ function stepNote(id: StepId, ctx: FlowContext): string {
       return abilityStepSettled(definition) ? 'typed in' : 'not set yet';
     }
     case 'choices': {
-      const offered = sheet.selections.filter((selection) => selection.entitled > 0);
+      const offered = classChoices(sheet).filter((selection) => selection.entitled > 0);
       if (offered.length === 0) return 'nothing to choose yet';
       const taken = offered.reduce((sum, selection) => sum + selection.picks.length, 0);
       const total = offered.reduce((sum, selection) => sum + selection.entitled, 0);
       return taken >= total ? 'all chosen' : `${taken} of ${total} chosen`;
     }
     case 'equipment': {
+      const kit = kitChoices(sheet).filter((selection) => selection.entitled > 0);
+      const total = kit.reduce((sum, selection) => sum + selection.entitled, 0);
+      const taken = kit.reduce((sum, selection) => sum + Math.min(selection.picks.length, selection.entitled), 0);
+      if (taken < total) return `${taken} of ${total} chosen`;
       const count = definition.inventory.length;
       return count === 0 ? 'nothing carried' : `${count} item${count === 1 ? '' : 's'}`;
     }
@@ -236,7 +263,9 @@ export function outstanding(ctx: FlowContext): readonly Outstanding[] {
     const short = selection.entitled - selection.picks.length;
     if (short <= 0) continue;
     open.push({
-      step: 'choices',
+      // A kit question is answered on the Equipment step, whichever feature
+      // asked it — the link has to land where the answer is.
+      step: selection.kit ? 'equipment' : 'choices',
       text: `${selection.label}: ${selection.picks.length} of ${selection.entitled} chosen.`,
     });
   }

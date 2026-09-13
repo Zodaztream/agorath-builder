@@ -444,7 +444,15 @@ export type EffectShape =
  */
 export type ChoiceGrant =
   | { readonly shape: 'proficiency.grant' }
-  | { readonly shape: 'proficiency.expertise' };
+  | { readonly shape: 'proficiency.expertise' }
+  /**
+   * The pick *is* the item. A pool of things a pack defines — `weapon:martial`
+   * — has no option entries to carry effects, so the offer says what a pick
+   * confers and the pick supplies the id, exactly as a skill list does. It is
+   * one item, always: "two martial weapons" is a `count` of 2, not a grant of
+   * two different things.
+   */
+  | { readonly shape: 'inventory.grant' };
 
 export type EffectShapeId = EffectShape['shape'];
 
@@ -584,6 +592,12 @@ export interface DerivedSelection {
   /** Everything the pool offers, so a picker can be rendered without any rules. */
   readonly candidates: readonly DerivedPick[];
   readonly picks: readonly DerivedPick[];
+  /**
+   * True when this pool is part of the character's starting equipment —
+   * either authored as one, or offered by a package the character took. A
+   * screen can file every kit question together without knowing the pool names.
+   */
+  readonly kit: boolean;
 }
 
 /**

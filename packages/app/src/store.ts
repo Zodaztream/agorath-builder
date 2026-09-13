@@ -167,6 +167,109 @@ export function removeItem(definition: CharacterDefinition, index: number): Char
 }
 
 // ---------------------------------------------------------------------------
+// Starting equipment, and the inventory it produces
+// ---------------------------------------------------------------------------
+
+/**
+ * Bring the inventory into line with what the character's content grants.
+ *
+ * The engine *reports* the grants — a class's fixed items, a package's contents,
+ * a background's kit (`sheet.startingItems`, each with the id of whatever put it
+ * there) — and this is what turns them into a list a player can carry, equip and
+ * drop. The two are kept apart on purpose: the definition holds the inventory,
+ * the pack holds what a rogue starts with, and neither is derived from the other
+ * beyond this one function.
+ *
+ * **It reconciles only when the grants themselves change.** Otherwise typing a
+ * character's name would put back the torch they dropped three edits ago, and a
+ * rule that makes the tool fight the player is worse than no rule. So a manual
+ * removal stands until the choice behind the item changes — pick a different
+ * pack and the old pack's contents go, because those were never the player's to
+ * keep.
+ *
+ * Anything the player added by hand has no `grantedBy` and is never touched.
+ */
+export function withStartingEquipment(
+  next: CharacterDefinition,
+  content: ContentProvider,
+  previous: CharacterDefinition,
+): CharacterDefinition {
+  const wanted = derive(next, content).startingItems;
+  if (sameGrants(wanted, derive(previous, content).startingItems)) return next;
+
+  // One row per (grant, item). A grant naming the same item twice is one row of
+  // that many, which is how a starting kit reads anyway: "two daggers" is one
+  // line, not two.
+  const desired = new Map<string, { item: string; quantity: number; grantedBy: string }>();
+  for (const granted of wanted) {
+    const key = grantKey(granted);
+    const existing = desired.get(key);
+    if (existing === undefined) desired.set(key, granted);
+    else desired.set(key, { ...existing, quantity: existing.quantity + granted.quantity });
+  }
+
+  const kept: InventoryItem[] = [];
+  const seen = new Set<string>();
+  for (const carried of next.inventory) {
+    // The player's own things pass through untouched.
+    if (carried.grantedBy === undefined) {
+      kept.push(carried);
+      continue;
+    }
+    const key = `${carried.grantedBy} ${carried.item}`;
+    // Withdrawn, or a second row for a grant already accounted for. Either way
+    // it is the tool's own doing and not the player's.
+    if (!desired.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    // Kept as the player left it: equipped, attuned, counted. Re-applying a
+    // package should not silently un-equip the armour.
+    kept.push(carried);
+  }
+
+  for (const [key, granted] of desired) {
+    if (seen.has(key)) continue;
+    kept.push({
+      item: granted.item,
+      quantity: granted.quantity,
+      equipped: wornByDefault(granted.item, content),
+      attuned: false,
+      custom: null,
+      grantedBy: granted.grantedBy,
+    });
+  }
+
+  return { ...next, inventory: kept };
+}
+
+function grantKey(granted: { readonly grantedBy: string; readonly item: string }): string {
+  return `${granted.grantedBy} ${granted.item}`;
+}
+
+/** The same grants, whatever order they arrived in. */
+function sameGrants(
+  a: readonly { readonly grantedBy: string; readonly item: string; readonly quantity: number }[],
+  b: readonly { readonly grantedBy: string; readonly item: string; readonly quantity: number }[],
+): boolean {
+  if (a.length !== b.length) return false;
+  const signature = (list: typeof a): string =>
+    list.map((g) => `${grantKey(g)} ${g.quantity}`).sort().join('|');
+  return signature(a) === signature(b);
+}
+
+/**
+ * Whether a granted item arrives worn.
+ *
+ * Armour and weapons do: a kit is what the character is equipped *with*, and
+ * leather armour that arrives unworn leaves the sheet showing an armour class
+ * the player did not choose. Everything else — packs, tools, rope — is carried,
+ * which is what `equipped` does not mean for them anyway.
+ */
+function wornByDefault(itemId: string, content: ContentProvider): boolean {
+  const entry = content.item(itemId);
+  return entry !== null && (entry.armor !== null || entry.weapon !== null);
+}
+
+// ---------------------------------------------------------------------------
 // Where a pool's picks belong
 // ---------------------------------------------------------------------------
 

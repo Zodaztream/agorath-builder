@@ -435,14 +435,34 @@ await shot('06-choices');
 await click('Next', "document.querySelector('.step-head h2').innerText.includes('equipment')");
 
 // -- 6. equipment -----------------------------------------------------------
-check('equipment is grouped by what the entries say they are',
-  await has('.step-body', 'Simple weapons') && await has('.step-body', 'Martial weapons')
-  && await has('.step-body', 'Heavy armour') && await has('.step-body', 'Shields'),
-  String(await text('.step-body')).slice(0, 200));
-check('armour and a weapon raise the numbers on the panel',
-  (await clickEach(['Chain Mail', 'Shield', 'Longbow'])) === 'ok'
-  && await until("document.querySelector('.stats').innerText.includes('18')"),
-  String(await text('.stats')));
+// What the class hands over, and nothing else: browsing a catalogue moved to
+// the sheet, where an inventory manager belongs (ADR-0013).
+const equipmentBody = String(await text('.step-body'));
+// The catalogue groups its items under an `h3` per kind, inside the picker on
+// the sheet. This step has no picker at all, which is the difference between
+// "here is your kit" and "here is the shop" — and is truer than looking for an
+// item's name, since a package's own sentence may well mention one.
+const catalogueGroups = Number(await evaluate("document.querySelectorAll('.picker .equip-group h3').length"));
+check('the equipment step offers the class\'s packages, not the item list',
+  equipmentBody.includes('Weapons') && equipmentBody.includes('Ranged weapon')
+  && equipmentBody.includes('Pack') && catalogueGroups === 0,
+  `${catalogueGroups} catalogue groups · ${equipmentBody.replace(/\n+/g, ' · ').slice(0, 220)}`);
+
+const tookPackages = await clickEach(['Leather, a longbow and 20 arrows', 'A martial weapon and a shield']);
+check('a package is taken by clicking it', tookPackages === 'ok', tookPackages);
+
+check('and taking a package raises the question it contains',
+  (await clickEach(['Longsword'])) === 'ok'
+  && await until("document.querySelector('.step-body').innerText.includes('Longsword')"),
+  String(await text('.step-body')).replace(/\n+/g, ' · ').slice(0, 260));
+
+const restOfKit = await clickEach(['A light crossbow and 20 bolts', "An explorer's pack"]);
+check('the rest of the kit is chosen', restOfKit === 'ok', restOfKit);
+
+check('what the kit gave is listed, and the numbers moved with it',
+  await has('.step-body', 'You are carrying')
+  && await until("document.querySelector('.stats').innerText.includes('15')"),
+  String(await text('.stats')).replace(/\n+/g, ' · ').slice(0, 160));
 await shot('07-equipment');
 await click('Finish', "document.querySelector('.step-head h2').innerText.includes('Your character')");
 
@@ -500,6 +520,28 @@ check('the ability increase reached the sheet', await has('.readout', '18'),
   String(await text('.readout')).replace(/\n+/g, ' · '));
 check('the fighting style landed on the longbow alone', await has('.attacks', '+6'),
   String(await text('.attacks')).replace(/\n+/g, ' | ').slice(0, 200));
+
+// -- 9. the sheet's inventory -----------------------------------------------
+// The kit the builder handed over arrives here, and this is where anything
+// picked up later is added — the catalogue is a mid-campaign act, not a step in
+// making a 1st-level character (ADR-0013).
+const carried = String(await text('.items')).replace(/\n+/g, ' · ');
+check('the sheet carries what the kit gave',
+  carried.includes('Leather') && carried.includes('Longsword') && carried.includes('Longbow')
+  && carried.includes('Arrows'),
+  carried.slice(0, 240));
+
+const addItem = await click('Add an item from the pack', "document.querySelector('.picker') !== null");
+check('the sheet can take an item from the pack', addItem === 'ok', addItem);
+check('and the item taken joins the inventory',
+  (await click('Greataxe')) === 'ok'
+  && await until("document.querySelector('.items').innerText.includes('Greataxe')"),
+  String(await text('.items')).replace(/\n+/g, ' · ').slice(0, 240));
+
+check('a custom item can be made on the sheet',
+  (await click('Make a custom item', "document.querySelector('.custom') !== null")) === 'ok'
+  && await has('.custom', 'Base'),
+  String(await text('.custom')).replace(/\n+/g, ' · ').slice(0, 200));
 await shot('12-sheet');
 
 const sheetGeometry = (await evaluate(
