@@ -14,6 +14,11 @@
  * take a *name*, not an expression: a bare word (`DEX`, `bard`) or a quoted
  * string when the name contains a character that would otherwise be an operator
  * (`"deft-explorer"`).
+ *
+ * Comparisons yield 1 or 0, and `test ? a : b` chooses between two values. They
+ * exist so a growing pool can be written honestly — `classLevel(fighter) >= 15
+ * ? 6 : classLevel(fighter) >= 7 ? 5 : 4` — rather than as arithmetic that is
+ * correct and unfindable.
  */
 
 import type { Ability } from './types.ts';
@@ -38,6 +43,9 @@ export class ExpressionError extends Error {
 // AST
 // ---------------------------------------------------------------------------
 
+/** Comparison operators. Each yields 1 or 0, so they compose arithmetically. */
+export type ComparisonOp = '==' | '!=' | '<' | '<=' | '>' | '>=';
+
 export type ExprNode =
   | { readonly kind: 'number'; readonly value: number }
   | { readonly kind: 'name'; readonly value: string }
@@ -46,9 +54,15 @@ export type ExprNode =
   | { readonly kind: 'unary'; readonly op: '-'; readonly operand: ExprNode }
   | {
       readonly kind: 'binary';
-      readonly op: '+' | '-' | '*' | '/';
+      readonly op: '+' | '-' | '*' | '/' | ComparisonOp;
       readonly left: ExprNode;
       readonly right: ExprNode;
+    }
+  | {
+      readonly kind: 'conditional';
+      readonly test: ExprNode;
+      readonly consequent: ExprNode;
+      readonly alternate: ExprNode;
     };
 
 /** Bare identifiers, which take no arguments and no parentheses. */
@@ -123,10 +137,36 @@ function tokenize(source: string): readonly Token[] {
       continue;
     }
 
-    if (ch === '+' || ch === '-' || ch === '*' || ch === '/') {
+    // Two-character operators first, so '>=' never tokenizes as '>' then '='.
+    const pair = source.slice(i, i + 2);
+    if (pair === '==' || pair === '!=' || pair === '<=' || pair === '>=') {
+      tokens.push({ type: 'op', value: pair, at: i });
+      i += 2;
+      continue;
+    }
+
+    if (ch === '+' || ch === '-' || ch === '*' || ch === '/' || ch === '<' || ch === '>') {
       tokens.push({ type: 'op', value: ch, at: i });
       i += 1;
       continue;
+    }
+
+    if (ch === '?' || ch === ':') {
+      tokens.push({ type: 'op', value: ch, at: i });
+      i += 1;
+      continue;
+    }
+
+    // The two mistakes a content author will actually make, named.
+    if (ch === '=') {
+      throw new ExpressionError(
+        `A single '=' is not an operator — did you mean '=='? At position ${i} in ${JSON.stringify(source)}`,
+      );
+    }
+    if (ch === '!') {
+      throw new ExpressionError(
+        `'!' is only valid as part of '!=', at position ${i} in ${JSON.stringify(source)}`,
+      );
     }
 
     if (ch === '(' || ch === ')') {
@@ -217,10 +257,10 @@ export function parseExpression(source: string): ExprNode {
             throw new ExpressionError(`${t.value}() takes exactly one argument in ${JSON.stringify(source)}`);
           }
         } else if (peek().value !== ')') {
-          args.push(parseArithmetic());
+          args.push(parseConditional());
           while (peek().value === ',') {
             next();
-            args.push(parseArithmetic());
+            args.push(parseConditional());
           }
         }
 
@@ -237,7 +277,7 @@ export function parseExpression(source: string): ExprNode {
     }
 
     if (t.value === '(') {
-      const inner = parseArithmetic();
+      const inner = parseConditional();
       expect(')');
       return inner;
     }
@@ -277,7 +317,36 @@ export function parseExpression(source: string): ExprNode {
     return left;
   }
 
-  const root = parseArithmetic();
+  function parseComparison(): ExprNode {
+    let left = parseArithmetic();
+    for (;;) {
+      const t = peek();
+      if (
+        t.type === 'op' &&
+        (t.value === '==' || t.value === '!=' || t.value === '<' ||
+         t.value === '<=' || t.value === '>' || t.value === '>=')
+      ) {
+        next();
+        left = { kind: 'binary', op: t.value as ComparisonOp, left, right: parseArithmetic() };
+      } else {
+        break;
+      }
+    }
+    return left;
+  }
+
+  /** `test ? a : b`, lowest precedence and right-associative. */
+  function parseConditional(): ExprNode {
+    const test = parseComparison();
+    if (peek().value !== '?') return test;
+    next();
+    const consequent = parseConditional();
+    expect(':');
+    const alternate = parseConditional();
+    return { kind: 'conditional', test, consequent, alternate };
+  }
+
+  const root = parseConditional();
   const trailing = peek();
   if (trailing.type !== 'eof') {
     throw new ExpressionError(
@@ -332,6 +401,12 @@ export function evaluateExpression(node: ExprNode, ctx: ExpressionContext, sourc
     case 'unary':
       return -evaluateExpression(node.operand, ctx, source);
 
+    case 'conditional':
+      // Truth is "not zero", so a comparison composes as a plain test.
+      return evaluateExpression(node.test, ctx, source) !== 0
+        ? evaluateExpression(node.consequent, ctx, source)
+        : evaluateExpression(node.alternate, ctx, source);
+
     case 'binary': {
       const l = evaluateExpression(node.left, ctx, source);
       const r = evaluateExpression(node.right, ctx, source);
@@ -345,6 +420,18 @@ export function evaluateExpression(node: ExprNode, ctx: ExpressionContext, sourc
         case '/':
           if (r === 0) throw new ExpressionError(`Division by zero in ${JSON.stringify(source)}`);
           return l / r;
+        case '==':
+          return l === r ? 1 : 0;
+        case '!=':
+          return l !== r ? 1 : 0;
+        case '<':
+          return l < r ? 1 : 0;
+        case '<=':
+          return l <= r ? 1 : 0;
+        case '>':
+          return l > r ? 1 : 0;
+        case '>=':
+          return l >= r ? 1 : 0;
       }
     }
 

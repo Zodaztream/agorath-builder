@@ -11,6 +11,7 @@ import type {
   ClassEntry,
   FeatEntry,
   ItemEntry,
+  OptionEntry,
   RaceEntry,
   SubclassEntry,
 } from './types.ts';
@@ -22,6 +23,15 @@ export interface ContentProvider {
   readonly background: (id: string) => BackgroundEntry | null;
   readonly feat: (id: string) => FeatEntry | null;
   readonly item: (id: string) => ItemEntry | null;
+  readonly option: (id: string) => OptionEntry | null;
+  /**
+   * Membership of a content-backed pool. The engine asks by tag rather than
+   * holding a list, which is why an offer naming a pool nobody has authored
+   * options for has to be *diagnosed* — nothing else would notice.
+   */
+  readonly options: (pool: string) => readonly OptionEntry[];
+  /** Membership of `subclass:<classId>`, from `SubclassEntry.class`. */
+  readonly subclassesOf: (classId: string) => readonly SubclassEntry[];
 }
 
 /**
@@ -38,17 +48,46 @@ export function inMemoryContent(source: {
   readonly backgrounds?: readonly BackgroundEntry[];
   readonly feats?: readonly FeatEntry[];
   readonly items?: readonly ItemEntry[];
+  readonly options?: readonly OptionEntry[];
 }): ContentProvider {
   const byId = <T extends { readonly id: string }>(list: readonly T[] | undefined) => {
     const map = new Map<string, T>();
     for (const entry of list ?? []) map.set(entry.id, entry);
     return (id: string): T | null => map.get(id) ?? null;
   };
+  const byTag = <T extends { readonly id: string }>(
+    list: readonly T[] | undefined,
+    tagOf: (entry: T) => string,
+  ) => {
+    const map = new Map<string, T[]>();
+    for (const entry of list ?? []) {
+      const tag = tagOf(entry);
+      const bucket = map.get(tag);
+      if (bucket === undefined) map.set(tag, [entry]);
+      else bucket.push(entry);
+    }
+    return (tag: string): readonly T[] => map.get(tag) ?? [];
+  };
+
   const classes = byId(source.classes);
   const subclasses = byId(source.subclasses);
   const races = byId(source.races);
   const backgrounds = byId(source.backgrounds);
   const feats = byId(source.feats);
   const items = byId(source.items);
-  return { class: classes, subclass: subclasses, race: races, background: backgrounds, feat: feats, item: items };
+  const options = byId(source.options);
+  const optionsByPool = byTag(source.options, (entry) => entry.pool);
+  const subclassesByClass = byTag(source.subclasses, (entry) => entry.class);
+
+  return {
+    class: classes,
+    subclass: subclasses,
+    race: races,
+    background: backgrounds,
+    feat: feats,
+    item: items,
+    option: options,
+    options: optionsByPool,
+    subclassesOf: subclassesByClass,
+  };
 }

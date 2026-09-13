@@ -6,10 +6,20 @@
  * definition it came from — which is what makes a stale attack bonus after a
  * level-up structurally impossible rather than a bug to hunt.
  *
- * Passes run in a fixed order, and the order is what makes retroactivity fall
- * out for free: effects are collected first, abilities are resolved second, and
- * everything that reads a modifier runs after. So raising CON moves hit points,
- * saves and skills with no special case.
+ * Effects are collected **first**, before abilities resolve. That order is
+ * forced by choices: a feat or a picked option can raise an ability score, so
+ * anything that reads a modifier has to run after collection has finished. What
+ * falls out is retroactivity — raising CON moves hit points, saves and skills
+ * with no special case.
+ *
+ * Two rules that look like details and are not:
+ *
+ * - A class's features are collected **once**, gated by that class's level. Not
+ *   once per level entry, which would collect a 5th-level rogue's Sneak Attack
+ *   five times and make entitlement arithmetic nonsense.
+ * - A pool's candidates and entitlement are computed from the features the
+ *   character actually has, so a subclass cannot be picked before the class
+ *   offers one. See ADR-0008 and ADR-0009.
  */
 
 import {
@@ -17,18 +27,23 @@ import {
   ABILITY_NAMES,
   type Ability,
   type CharacterDefinition,
+  type ChoiceGrant,
   type CustomItem,
   type DerivedAbility,
   type DerivedAttack,
   type DerivedDamageComponent,
+  type DerivedNote,
+  type DerivedPick,
   type DerivedResource,
   type DerivedSave,
+  type DerivedSelection,
   type DerivedSheet,
   type DerivedSkill,
   type DerivedSpellcasting,
-  type DerivedNote,
   type ItemEntry,
+  type OptionEntry,
   type SkillId,
+  type SubclassEntry,
 } from './types.ts';
 
 import {
@@ -36,6 +51,7 @@ import {
   PASSIVE_BASE,
   SKILL_ABILITY,
   SKILL_IDS,
+  SKILL_NAMES,
   abilityModifier,
   attackAbility,
   averageHitPoints,
@@ -54,6 +70,8 @@ import {
   emptyAccumulator,
   matchesScope,
   type Accumulator,
+  type OfferGrant,
+  type ResourceGrant,
   type ScopedAmount,
   type ScopedDice,
   type ScopeSubject,
@@ -67,6 +85,43 @@ const PASSIVE_SKILLS = ['perception', 'investigation', 'insight'] as const;
 
 /** A character may be attuned to at most three magic items. */
 export const ATTUNEMENT_LIMIT = 3;
+
+/** What a pick from a pool turned out to be. */
+interface PoolMember {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: 'skill' | 'tool' | 'option' | 'subclass';
+  /** The entry behind the pick, when there is one. */
+  readonly option: OptionEntry | null;
+  readonly subclass: SubclassEntry | null;
+}
+
+/**
+ * Where a pool's members come from. It decides three things at once: whether
+ * `grants` is required or forbidden, whether an empty pool is a typo, and how a
+ * rejected pick is worded.
+ */
+type PoolKind = 'engine' | 'derived' | 'content' | 'subclass';
+
+interface ResolvedPool {
+  readonly pool: string;
+  readonly label: string;
+  readonly entitled: number;
+  readonly members: ReadonlyMap<string, PoolMember>;
+  /** The narrowed id set, from every offer's `from`. Null when unrestricted. */
+  readonly allowed: ReadonlySet<string> | null;
+  readonly grants: readonly ChoiceGrant[];
+  readonly kind: PoolKind;
+}
+
+/** One `select` the definition makes, in level order. */
+interface Selection {
+  readonly pool: string;
+  readonly picks: readonly string[];
+  /** The class level reached at the entry that made the pick. */
+  readonly classLevel: number;
+  readonly classId: string;
+}
 
 export function derive(definition: CharacterDefinition, content: ContentProvider): DerivedSheet {
   const diagnostics: string[] = [];
@@ -92,114 +147,138 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
 
   const prof = proficiencyBonus(totalLevel);
 
-  // -- pass 1: ability increases, from every source that grants one ---------
-  const increases: Record<Ability, number> = { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 };
-
+  // -- named content, resolved once -----------------------------------------
   const race = definition.race === null ? null : content.race(definition.race);
   if (definition.race !== null && race === null) {
     diagnostics.push(`Missing race "${definition.race}" — it is not in any loaded pack.`);
   }
-  for (const inc of race?.abilityIncreases ?? []) increases[inc.ability] += inc.amount;
-
   const subrace = definition.subrace === null ? null : content.race(definition.subrace);
   if (definition.subrace !== null && subrace === null) {
     diagnostics.push(`Missing subrace "${definition.subrace}" — it is not in any loaded pack.`);
   }
-  for (const inc of subrace?.abilityIncreases ?? []) increases[inc.ability] += inc.amount;
-
-  for (const level of definition.levels) {
-    for (const choice of level.choices) {
-      if (choice.kind === 'asi') {
-        for (const inc of choice.increases) increases[inc.ability] += inc.amount;
-      }
-    }
-  }
-
-  // -- pass 2: abilities and their modifiers --------------------------------
-  const abilities = {} as Record<Ability, DerivedAbility>;
-  for (const ability of ABILITIES) {
-    const score = Math.min(ABILITY_CAP, definition.abilities[ability] + increases[ability]);
-    abilities[ability] = { id: ability, score, modifier: abilityModifier(score) };
-  }
-  const mod = (ability: Ability): number => abilities[ability].modifier;
-
-  // -- pass 3: collect effects ---------------------------------------------
-  const acc: Accumulator = emptyAccumulator();
-  const notes: DerivedNote[] = [];
-
-  for (const effect of race?.effects ?? []) collectEffect(acc, effect, race?.name ?? 'race');
-  for (const effect of subrace?.effects ?? []) collectEffect(acc, effect, subrace?.name ?? 'subrace');
-
   const background = definition.background === null ? null : content.background(definition.background);
   if (definition.background !== null && background === null) {
     diagnostics.push(`Missing background "${definition.background}" — it is not in any loaded pack.`);
   }
+
+  // -- pass 1: collect every effect -----------------------------------------
+  const acc: Accumulator = emptyAccumulator();
+  const notes: DerivedNote[] = [];
+  /** Every entry id the character has, which is what `hasFeature()` resolves. */
+  const featureIds = new Set<string>();
+  const selections: Selection[] = [];
+
+  for (const inc of race?.abilityIncreases ?? []) acc.abilityIncreases[inc.ability] += inc.amount;
+  for (const inc of subrace?.abilityIncreases ?? []) acc.abilityIncreases[inc.ability] += inc.amount;
+  for (const effect of race?.effects ?? []) collectEffect(acc, effect, race?.name ?? 'race');
+  for (const effect of subrace?.effects ?? []) collectEffect(acc, effect, subrace?.name ?? 'subrace');
   for (const effect of background?.effects ?? []) collectEffect(acc, effect, background?.name ?? 'background');
 
-  for (const level of definition.levels) {
-    const classLevel = classLevels[level.class] ?? 0;
-    const entry = content.class(level.class);
-    if (entry === null) continue;
-
+  // A class's features, once, at the level that class has reached.
+  for (const classId of Object.keys(classLevels)) {
+    const classLevel = classLevels[classId] ?? 0;
+    const entry = content.class(classId);
+    if (entry === null) {
+      diagnostics.push(`Missing class "${classId}" — it is not in any loaded pack.`);
+      continue;
+    }
     for (const feature of entry.features) {
       if (feature.level > classLevel) continue;
+      featureIds.add(feature.id);
       notes.push({ name: feature.name, level: feature.level, summary: feature.summary });
       for (const effect of feature.effects) collectEffect(acc, effect, feature.name);
     }
-
-    if (level.subclass !== null) {
-      const subclass = content.subclass(level.subclass);
-      if (subclass === null) {
-        diagnostics.push(`Missing subclass "${level.subclass}" — it is not in any loaded pack.`);
-      } else {
-        for (const feature of subclass.features) {
-          if (feature.level > classLevel) continue;
-          notes.push({ name: feature.name, level: feature.level, summary: feature.summary });
-          for (const effect of feature.effects) collectEffect(acc, effect, feature.name);
-        }
-      }
-    }
-
-    for (const choice of level.choices) {
-      if (choice.kind === 'expertise') {
-        for (const skill of choice.skills) acc.skillExpertise.add(skill);
-        continue;
-      }
-      if (choice.kind !== 'feat') continue;
-      const feat = content.feat(choice.feat);
-      if (feat === null) {
-        diagnostics.push(`Missing feat "${choice.feat}" — it is not in any loaded pack.`);
-        continue;
-      }
-      notes.push({ name: feat.name, level: classLevel, summary: 'Feat.' });
-      for (const effect of feat.effects) collectEffect(acc, effect, feat.name);
-    }
   }
 
-  // Saving throw proficiencies are a class rule, so they are granted from the
-  // engine's table rather than declared by content.
+  // The subclass offer is the engine's, from the class table. Content does not
+  // declare it and cannot get its level wrong. This is what finally uses
+  // `subclassLevel`, and why a level-1 fighter has no archetype to pick.
   for (const classId of Object.keys(classLevels)) {
     const rules = classRules(classId);
-    if (rules === null) continue;
-    for (const ability of rules.savingThrows) acc.saveProficiencies.add(ability);
-  }
-
-  // A class that casts grants its spellcasting from the engine's own table —
-  // content does not have to declare it, and cannot get it wrong.
-  const grantedByClass = new Set(acc.spellcasting.map((g) => g.source));
-  for (const classId of Object.keys(classLevels)) {
-    const rules = classRules(classId);
-    if (rules === null || rules.spellcasting === null || rules.spellcastingAbility === null) continue;
-    if (grantedByClass.has(classId)) continue;
-    acc.spellcasting.push({
-      source: classId,
-      ability: rules.spellcastingAbility,
-      progression: rules.spellcasting,
-      preparation: rules.preparation ?? 'known',
+    const classLevel = classLevels[classId] ?? 0;
+    if (rules === null || classLevel < rules.subclassLevel) continue;
+    acc.offers.push({
+      pool: `subclass:${classId}`,
+      label: rules.subclassLabel ?? 'Subclass',
+      count: 1,
+      from: null,
+      grants: [],
+      origin: classId,
     });
   }
 
-  // -- pass 4: equipment ----------------------------------------------------
+  // Choices made per level, with the class level reached at that entry.
+  const runningLevels: Record<string, number> = {};
+  for (const level of definition.levels) {
+    const classLevelHere = (runningLevels[level.class] ?? 0) + 1;
+    runningLevels[level.class] = classLevelHere;
+    const rules = classRules(level.class);
+
+    for (const choice of level.choices) {
+      if (choice.kind === 'asi') {
+        // The class table says which levels grant one. An increase at any other
+        // level is reported and still applied: the sheet shows what the
+        // definition says, plus the error, rather than quietly disagreeing.
+        if (rules === null || !rules.asiLevels.includes(classLevelHere)) {
+          diagnostics.push(
+            `An ability score improvement at ${level.class} level ${classLevelHere}, which does not grant one.`,
+          );
+        }
+        for (const inc of choice.increases) acc.abilityIncreases[inc.ability] += inc.amount;
+        continue;
+      }
+
+      if (choice.kind === 'feat') {
+        if (rules === null || !rules.asiLevels.includes(classLevelHere)) {
+          diagnostics.push(`A feat at ${level.class} level ${classLevelHere}, which does not grant one.`);
+        }
+        const feat = content.feat(choice.feat);
+        if (feat === null) {
+          diagnostics.push(`Missing feat "${choice.feat}" — it is not in any loaded pack.`);
+          continue;
+        }
+        featureIds.add(feat.id);
+        notes.push({ name: feat.name, level: classLevelHere, summary: 'Feat.' });
+        for (const effect of feat.effects) collectEffect(acc, effect, feat.name);
+        continue;
+      }
+
+      if (choice.kind === 'select') {
+        selections.push({
+          pool: choice.pool,
+          picks: choice.picks,
+          classLevel: classLevelHere,
+          classId: level.class,
+        });
+      }
+    }
+  }
+
+  // Subclass features, from whatever the picks chose. Gated by the class level,
+  // because an archetype grants features at 3rd, 7th, 10th, 15th and 18th — not
+  // all of them the moment it is chosen.
+  //
+  // A pick that resolves to nothing is passed over in silence here: whether it
+  // is missing from the packs or simply not a subclass of this class is a
+  // *membership* question, and the pool check answers it once rather than twice.
+  for (const selection of selections) {
+    if (!selection.pool.startsWith('subclass:')) continue;
+    const classId = selection.pool.slice('subclass:'.length);
+    const classLevel = classLevels[classId] ?? 0;
+    for (const pick of selection.picks) {
+      const subclass = content.subclass(pick);
+      if (subclass === null || subclass.class !== classId) continue;
+      featureIds.add(subclass.id);
+      for (const feature of subclass.features) {
+        if (feature.level > classLevel) continue;
+        featureIds.add(feature.id);
+        notes.push({ name: feature.name, level: feature.level, summary: feature.summary });
+        for (const effect of feature.effects) collectEffect(acc, effect, feature.name);
+      }
+    }
+  }
+
+  // -- pass 2: equipment ----------------------------------------------------
   let attuned = 0;
   let armorWorn: { name: string; baseAc: number; maxDex: number | null } | null = null;
   let shieldEquipped = false;
@@ -245,6 +324,108 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
 
   if (attuned > ATTUNEMENT_LIMIT) {
     diagnostics.push(`Attuned to ${attuned} items; the limit is ${ATTUNEMENT_LIMIT}.`);
+  }
+
+  // -- pass 3: resolve selections -------------------------------------------
+  // Proficiencies first, derived pools second: a rogue's Expertise picks from
+  // the skills the *same* level just made them proficient in, so membership has
+  // to be computed after the grants that create it.
+  const offersByPool = new Map<string, OfferGrant[]>();
+  for (const offer of acc.offers) {
+    const bucket = offersByPool.get(offer.pool);
+    if (bucket === undefined) offersByPool.set(offer.pool, [offer]);
+    else bucket.push(offer);
+  }
+
+  const poolFor = (pool: string): ResolvedPool => resolvePool(pool, content, acc, offersByPool, diagnostics);
+
+  const resolved = new Map<string, ResolvedPool>();
+
+  // Two phases, in this order, because a derived pool's membership depends on
+  // the grants other picks have just made: a rogue's Expertise draws on the
+  // skills the same feature made them proficient in.
+  const phases = [
+    selections.filter((s) => !s.pool.startsWith('proficient:')),
+    selections.filter((s) => s.pool.startsWith('proficient:')),
+  ];
+  for (const phase of phases) {
+    for (const selection of phase) {
+      const pool = resolved.get(selection.pool) ?? poolFor(selection.pool);
+      resolved.set(selection.pool, pool);
+      validateAndApply(selection, pool, acc, featureIds, notes, diagnostics);
+    }
+  }
+
+  // A pool the character has been offered but has not spent yet is resolved
+  // too, so the sheet can say "1 of 2 chosen" rather than "0 of 0" — and so an
+  // offer naming a pool nobody authored options for is caught even when the
+  // player has not tried to pick from it.
+  for (const pool of offersByPool.keys()) {
+    if (!resolved.has(pool)) resolved.set(pool, poolFor(pool));
+  }
+
+  // -- pass 4: abilities ----------------------------------------------------
+  const abilities = {} as Record<Ability, DerivedAbility>;
+  for (const ability of ABILITIES) {
+    const score = Math.min(ABILITY_CAP, definition.abilities[ability] + acc.abilityIncreases[ability]);
+    abilities[ability] = { id: ability, score, modifier: abilityModifier(score) };
+  }
+  const mod = (ability: Ability): number => abilities[ability].modifier;
+
+  const expressionContext: ExpressionContext = {
+    totalLevel,
+    profBonus: prof,
+    abilityScore: (a) => abilities[a].score,
+    abilityMod: (a) => abilities[a].modifier,
+    classLevel: (id) => classLevels[id] ?? 0,
+    hasFeature: (id) => featureIds.has(id),
+  };
+
+  // Prerequisites are checked here rather than with the picks, because they may
+  // read an ability modifier — "Strength 13 or higher" is a prerequisite before
+  // it is anything else.
+  for (const selection of selections) {
+    const pool = resolved.get(selection.pool);
+    if (pool === undefined) continue;
+    for (const pick of selection.picks) {
+      const member = pool.members.get(pick);
+      if (member?.option == null) continue;
+      for (const prerequisite of member.option.prerequisites) {
+        let met: number;
+        try {
+          met = evaluate(prerequisite, expressionContext);
+        } catch (error) {
+          diagnostics.push(`"${member.option.name}" prerequisite ${JSON.stringify(prerequisite)}: ${(error as Error).message}`);
+          continue;
+        }
+        if (met === 0) {
+          diagnostics.push(`"${member.option.name}" requires ${prerequisite}, which is not met.`);
+        }
+      }
+    }
+  }
+
+  // Saving throw proficiencies are a class rule, so they are granted from the
+  // engine's table rather than declared by content.
+  for (const classId of Object.keys(classLevels)) {
+    const rules = classRules(classId);
+    if (rules === null) continue;
+    for (const ability of rules.savingThrows) acc.saveProficiencies.add(ability);
+  }
+
+  // A class that casts grants its spellcasting from the engine's own table —
+  // content does not have to declare it, and cannot get it wrong.
+  const grantedByClass = new Set(acc.spellcasting.map((g) => g.source));
+  for (const classId of Object.keys(classLevels)) {
+    const rules = classRules(classId);
+    if (rules === null || rules.spellcasting === null || rules.spellcastingAbility === null) continue;
+    if (grantedByClass.has(classId)) continue;
+    acc.spellcasting.push({
+      source: classId,
+      ability: rules.spellcastingAbility,
+      progression: rules.spellcasting,
+      preparation: rules.preparation ?? 'known',
+    });
   }
 
   // -- pass 5: armour class -------------------------------------------------
@@ -330,9 +511,35 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
     const ability = SKILL_ABILITY[id];
     const proficient = acc.skillProficiencies.has(id);
     const expertise = proficient && acc.skillExpertise.has(id);
-    const halfProficiency = !proficient && acc.halfProficiencySkills;
-    const training = expertise ? prof * 2 : proficient ? prof : halfProficiency ? Math.floor(prof / 2) : 0;
-    return { id, ability, proficient, expertise, halfProficiency, bonus: mod(ability) + training };
+
+    // Half proficiency applies only where proficiency does not, and the best
+    // rounding wins: Jack of All Trades rounds down, Remarkable Athlete up.
+    let half: number | null = null;
+    if (!proficient) {
+      const subject: ScopeSubject = {
+        kind: 'check',
+        melee: false,
+        ranged: false,
+        properties: [],
+        skills: [id],
+        ability,
+      };
+      for (const grant of acc.halfProficiency) {
+        if (!matchesScope(grant.scope, subject)) continue;
+        const value = grant.round === 'up' ? Math.ceil(prof / 2) : Math.floor(prof / 2);
+        half = half === null ? value : Math.max(half, value);
+      }
+    }
+
+    const training = expertise ? prof * 2 : proficient ? prof : half ?? 0;
+    return {
+      id,
+      ability,
+      proficient,
+      expertise,
+      halfProficiency: half !== null,
+      bonus: mod(ability) + training,
+    };
   });
   const skillById = new Map<SkillId, DerivedSkill>(skills.map((s) => [s.id, s]));
 
@@ -498,25 +705,29 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
   }
 
   // -- pass 11: resources ---------------------------------------------------
-  const expressionContext: ExpressionContext = {
-    totalLevel,
-    profBonus: prof,
-    abilityScore: (a) => abilities[a].score,
-    abilityMod: (a) => abilities[a].modifier,
-    classLevel: (id) => classLevels[id] ?? 0,
-    hasFeature: (id) => notes.some((n) => n.name.toLowerCase().replace(/\s+/g, '-') === id),
-  };
+  // A pool declared more than once under the same id takes the maximum, which
+  // is how Greater Portent raises Portent's dice from two to three. The maximum
+  // is taken *after* evaluation, because `max` is an expression and two of them
+  // cannot be compared as text.
+  const resourcesById = new Map<string, ResourceGrant[]>();
+  for (const grant of acc.resources) {
+    const bucket = resourcesById.get(grant.id);
+    if (bucket === undefined) resourcesById.set(grant.id, [grant]);
+    else bucket.push(grant);
+  }
 
-  const resources: DerivedResource[] = acc.resources.map((r) => {
-    let max: number;
-    try {
-      max = evaluate(r.max, expressionContext);
-    } catch (error) {
-      diagnostics.push(`Resource "${r.id}": ${(error as Error).message}`);
-      max = 0;
+  const resources: DerivedResource[] = [];
+  for (const [id, grants] of resourcesById) {
+    let max = 0;
+    for (const grant of grants) {
+      try {
+        max = Math.max(max, evaluate(grant.max, expressionContext));
+      } catch (error) {
+        diagnostics.push(`Resource "${id}": ${(error as Error).message}`);
+      }
     }
-    return { id: r.id, max, recharge: r.recharge };
-  });
+    resources.push({ id, max, recharge: grants[0]?.recharge ?? 'long' });
+  }
 
   // -- finish ---------------------------------------------------------------
   const speed = (acc.speed ?? 30) + acc.speedBonus;
@@ -542,11 +753,233 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
     hitDice,
     attacks,
     attacksPerAction: 1 + acc.extraAttacks,
+    critRange: acc.critMinimum,
     spellcasting,
     resources,
+    selections: describeSelections(resolved, acc.offers, selections),
     notes,
     diagnostics,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Pools
+// ---------------------------------------------------------------------------
+
+/** A pool's members, its entitlement, and what a pick from it confers. */
+function resolvePool(
+  pool: string,
+  content: ContentProvider,
+  acc: Accumulator,
+  offersByPool: ReadonlyMap<string, readonly OfferGrant[]>,
+  diagnostics: string[],
+): ResolvedPool {
+  const offers = offersByPool.get(pool) ?? [];
+  const entitled = offers.reduce((sum, offer) => sum + offer.count, 0);
+
+  const members = new Map<string, PoolMember>();
+
+  const skillMember = (id: SkillId): PoolMember => ({
+    id,
+    name: SKILL_NAMES[id],
+    kind: 'skill',
+    option: null,
+    subclass: null,
+  });
+
+  // A pool name is `<family>[:<qualifier>]`. The family picks the resolver; the
+  // qualifier either filters membership (`proficient:skill+tool`) or, for
+  // `skill`, only separates one offer from another — a fighter's skill list and
+  // a rogue's are the same list of eighteen narrowed by different `from`, and
+  // two classes must be able to offer them as two pools rather than one.
+  const separator = pool.indexOf(':');
+  const family = separator === -1 ? pool : pool.slice(0, separator);
+  const qualifier = separator === -1 ? '' : pool.slice(separator + 1);
+
+  let kind: PoolKind;
+  if (family === 'skill') {
+    kind = 'engine';
+    for (const id of SKILL_IDS) members.set(id, skillMember(id));
+  } else if (family === 'proficient') {
+    // The character's own proficiencies, which is the eligibility rule for
+    // expertise expressed as membership rather than as a check that could be
+    // forgotten. An empty one is legitimate: a character with no tools has no
+    // tool proficiencies to be expert in.
+    kind = 'derived';
+    const kinds = qualifier.split('+');
+    if (kinds.includes('skill')) {
+      for (const id of acc.skillProficiencies) members.set(id, skillMember(id));
+    }
+    if (kinds.includes('tool')) {
+      for (const id of acc.toolProficiencies) {
+        members.set(id, { id, name: id, kind: 'tool', option: null, subclass: null });
+      }
+    }
+  } else if (family === 'subclass') {
+    kind = 'subclass';
+    for (const entry of content.subclassesOf(qualifier)) {
+      members.set(entry.id, { id: entry.id, name: entry.name, kind: 'subclass', option: null, subclass: entry });
+    }
+  } else {
+    // A content pool is matched on its exact tag, qualifier included.
+    kind = 'content';
+    for (const entry of content.options(pool)) {
+      members.set(entry.id, { id: entry.id, name: entry.name, kind: 'option', option: entry, subclass: null });
+    }
+  }
+
+  // `from` narrows a pool. Two offers for one pool that narrow it differently
+  // cannot be told apart at pick time, so the union is taken and the pack is
+  // told to give them distinct pool names rather than being quietly permissive.
+  const narrower = offers.map((offer) => offer.from).filter((from): from is readonly string[] => from !== null);
+  const unrestricted = offers.some((offer) => offer.from === null);
+  const distinct = new Set(narrower.map((from) => [...from].sort().join(',')));
+  if (!unrestricted && distinct.size > 1) {
+    diagnostics.push(
+      `Pool "${pool}" is offered with different \`from\` lists by different features — give them distinct pool names.`,
+    );
+  }
+  const allowed = unrestricted || distinct.size === 0 ? null : new Set(narrower.flat());
+
+  const grants = offers[0]?.grants ?? [];
+  const grantShapes = new Set(offers.map((offer) => offer.grants.map((g) => g.shape).sort().join(',')));
+  if (grantShapes.size > 1) {
+    diagnostics.push(`Pool "${pool}" is offered with different \`grants\` — they must agree.`);
+  }
+
+  // A content pool with no members is a typo, and nothing else would notice it:
+  // a tag-based pool is only as safe as this check.
+  if (kind === 'content' && entitled > 0 && members.size === 0) {
+    diagnostics.push(`Pool "${pool}" has no options in the loaded packs.`);
+  }
+
+  // A built-in pool whose offer forgot `grants` would confer nothing at all,
+  // which is the failure the whole mechanism exists to remove. Checked on the
+  // offer rather than on a pick, so it is reported even if nobody has chosen.
+  if ((kind === 'engine' || kind === 'derived') && entitled > 0 && grants.length === 0) {
+    diagnostics.push(`Pool "${pool}" declares no \`grants\`, so its picks confer nothing.`);
+  }
+
+  // A content pool carrying `grants` is a pack mistake: the entries already say
+  // what they confer, and two answers would disagree silently.
+  if (kind === 'content' && grants.length > 0) {
+    diagnostics.push(`Pool "${pool}" is content-backed, so its options must not declare \`grants\`.`);
+  }
+
+  return {
+    pool,
+    label: offers[0]?.label ?? pool,
+    entitled,
+    members,
+    allowed,
+    grants,
+    kind,
+  };
+}
+
+/**
+ * Check one `select` against its pool, and give the picks their reward.
+ *
+ * Every failure here is a diagnostic rather than a throw: a character that
+ * cannot be built is exactly the thing the sheet has to be able to say.
+ */
+function validateAndApply(
+  selection: Selection,
+  pool: ResolvedPool,
+  acc: Accumulator,
+  featureIds: Set<string>,
+  notes: DerivedNote[],
+  diagnostics: string[],
+): void {
+  if (pool.entitled === 0) {
+    diagnostics.push(`Picks for pool "${selection.pool}", which no feature offers.`);
+    return;
+  }
+
+  if (selection.picks.length > pool.entitled) {
+    diagnostics.push(
+      `Pool "${selection.pool}" allows ${pool.entitled} pick${pool.entitled === 1 ? '' : 's'}, but ${selection.picks.length} were taken.`,
+    );
+  }
+
+  const seen = new Set<string>();
+  for (const pick of selection.picks) {
+    if (seen.has(pick)) {
+      diagnostics.push(`"${pick}" is picked twice from pool "${selection.pool}".`);
+      continue;
+    }
+    seen.add(pick);
+
+    const member = pool.members.get(pick);
+    if (member === undefined) {
+      // For a derived pool this is the expertise rule: you cannot have
+      // expertise in something you are not proficient in. It is reported
+      // rather than skipped, which is what the engine used to do.
+      diagnostics.push(
+        pool.kind === 'derived'
+          ? `"${pick}" is not something the character is proficient in, so it cannot be picked from "${selection.pool}".`
+          : `"${pick}" is not in pool "${selection.pool}".`,
+      );
+      continue;
+    }
+    if (pool.allowed !== null && !pool.allowed.has(pick)) {
+      diagnostics.push(`"${pick}" is not one of the options offered by pool "${selection.pool}".`);
+      continue;
+    }
+
+    if (member.option !== null) {
+      // A content pool: the entry carries its own reward.
+      featureIds.add(member.option.id);
+      notes.push({ name: member.option.name, level: selection.classLevel, summary: member.option.summary });
+      for (const effect of member.option.effects) collectEffect(acc, effect, member.option.name);
+      continue;
+    }
+
+    // A built-in pool: the offer says what the pick confers.
+    for (const grant of pool.grants) {
+      if (grant.shape === 'proficiency.grant') {
+        if (member.kind === 'skill') acc.skillProficiencies.add(member.id as SkillId);
+        else if (member.kind === 'tool') acc.toolProficiencies.add(member.id);
+      } else {
+        if (member.kind === 'skill') acc.skillExpertise.add(member.id as SkillId);
+        else if (member.kind === 'tool') acc.toolExpertise.add(member.id);
+      }
+    }
+  }
+
+}
+
+/** Every pool the character was offered or picked from, resolved for display. */
+function describeSelections(
+  resolved: ReadonlyMap<string, ResolvedPool>,
+  offers: readonly OfferGrant[],
+  selections: readonly Selection[],
+): readonly DerivedSelection[] {
+  const pools = new Set<string>();
+  for (const offer of offers) pools.add(offer.pool);
+  for (const selection of selections) pools.add(selection.pool);
+
+  const picksByPool = new Map<string, DerivedPick[]>();
+  for (const selection of selections) {
+    const bucket = picksByPool.get(selection.pool) ?? [];
+    for (const pick of selection.picks) {
+      const member = resolved.get(selection.pool)?.members.get(pick);
+      bucket.push({ id: pick, name: member?.name ?? pick, pool: selection.pool });
+    }
+    picksByPool.set(selection.pool, bucket);
+  }
+
+  const out: DerivedSelection[] = [];
+  for (const pool of pools) {
+    const entry = resolved.get(pool);
+    out.push({
+      pool,
+      label: entry?.label ?? pool,
+      entitled: entry?.entitled ?? 0,
+      picks: picksByPool.get(pool) ?? [],
+    });
+  }
+  return out;
 }
 
 /** A short human summary of a derived ability, for tests and the UI. */

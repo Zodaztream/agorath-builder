@@ -14,6 +14,7 @@ export type {
   AbilityIncrease,
   BackgroundEntry,
   CharacterDefinition,
+  ChoiceGrant,
   ClassEntry,
   Condition,
   Currency,
@@ -23,8 +24,10 @@ export type {
   DerivedAttack,
   DerivedDamageComponent,
   DerivedNote,
+  DerivedPick,
   DerivedResource,
   DerivedSave,
+  DerivedSelection,
   DerivedSheet,
   DerivedSkill,
   DerivedSpellcasting,
@@ -39,6 +42,7 @@ export type {
   ItemEntry,
   LevelChoice,
   LevelEntry,
+  OptionEntry,
   PackRef,
   RaceEntry,
   Scope,
@@ -87,7 +91,16 @@ export {
 export type { ExprNode, ExpressionContext } from './expression.ts';
 
 export { anySubject, collectEffect, emptyAccumulator, matchesScope } from './effects.ts';
-export type { Accumulator, AcFormulaSource, ScopeSubject, ScopedAmount, ScopedDice } from './effects.ts';
+export type {
+  Accumulator,
+  AcFormulaSource,
+  HalfProficiencyGrant,
+  OfferGrant,
+  ResourceGrant,
+  ScopeSubject,
+  ScopedAmount,
+  ScopedDice,
+} from './effects.ts';
 
 export { inMemoryContent } from './content.ts';
 export type { ContentProvider } from './content.ts';

@@ -117,6 +117,13 @@ export interface ClassRules {
   readonly asiLevels: readonly number[];
   /** The class level at which a subclass is chosen. Not 3 for every class. */
   readonly subclassLevel: number;
+  /**
+   * What that choice is called on the class table — "Martial Archetype",
+   * "Divine Domain". Null until the authoring pass reads it off the Features
+   * column: a label is book content, so it is not written from recall
+   * (ADR-0004). The engine falls back to "Subclass" while it is null.
+   */
+  readonly subclassLabel: string | null;
   readonly spellcasting: 'full' | 'half' | 'third' | 'pact' | null;
   /** The ability this class casts with. Null when the class does not cast. */
   readonly spellcastingAbility: Ability | null;
@@ -125,18 +132,18 @@ export interface ClassRules {
 }
 
 export const CLASS_RULES: Readonly<Record<string, ClassRules>> = {
-  barbarian: { hitDie: 12, savingThrows: ['str', 'con'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 3, spellcasting: null, spellcastingAbility: null, preparation: null },
-  bard: { hitDie: 8, savingThrows: ['dex', 'cha'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 3, spellcasting: 'full', spellcastingAbility: 'cha', preparation: 'known' },
-  cleric: { hitDie: 8, savingThrows: ['wis', 'cha'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 1, spellcasting: 'full', spellcastingAbility: 'wis', preparation: 'prepared' },
-  druid: { hitDie: 8, savingThrows: ['int', 'wis'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 2, spellcasting: 'full', spellcastingAbility: 'wis', preparation: 'prepared' },
-  fighter: { hitDie: 10, savingThrows: ['str', 'con'], asiLevels: [4, 6, 8, 12, 14, 16, 19], subclassLevel: 3, spellcasting: null, spellcastingAbility: null, preparation: null },
-  monk: { hitDie: 8, savingThrows: ['str', 'dex'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 3, spellcasting: null, spellcastingAbility: null, preparation: null },
-  paladin: { hitDie: 10, savingThrows: ['wis', 'cha'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 3, spellcasting: 'half', spellcastingAbility: 'cha', preparation: 'prepared' },
-  ranger: { hitDie: 10, savingThrows: ['str', 'dex'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 3, spellcasting: 'half', spellcastingAbility: 'wis', preparation: 'known' },
-  rogue: { hitDie: 8, savingThrows: ['dex', 'int'], asiLevels: [4, 8, 10, 12, 16, 19], subclassLevel: 3, spellcasting: null, spellcastingAbility: null, preparation: null },
-  sorcerer: { hitDie: 6, savingThrows: ['con', 'cha'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 1, spellcasting: 'full', spellcastingAbility: 'cha', preparation: 'known' },
-  warlock: { hitDie: 8, savingThrows: ['wis', 'cha'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 1, spellcasting: 'pact', spellcastingAbility: 'cha', preparation: 'known' },
-  wizard: { hitDie: 6, savingThrows: ['int', 'wis'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 2, spellcasting: 'full', spellcastingAbility: 'int', preparation: 'prepared' },
+  barbarian: { hitDie: 12, savingThrows: ['str', 'con'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 3, subclassLabel: null, spellcasting: null, spellcastingAbility: null, preparation: null },
+  bard: { hitDie: 8, savingThrows: ['dex', 'cha'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 3, subclassLabel: null, spellcasting: 'full', spellcastingAbility: 'cha', preparation: 'known' },
+  cleric: { hitDie: 8, savingThrows: ['wis', 'cha'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 1, subclassLabel: null, spellcasting: 'full', spellcastingAbility: 'wis', preparation: 'prepared' },
+  druid: { hitDie: 8, savingThrows: ['int', 'wis'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 2, subclassLabel: null, spellcasting: 'full', spellcastingAbility: 'wis', preparation: 'prepared' },
+  fighter: { hitDie: 10, savingThrows: ['str', 'con'], asiLevels: [4, 6, 8, 12, 14, 16, 19], subclassLevel: 3, subclassLabel: null, spellcasting: null, spellcastingAbility: null, preparation: null },
+  monk: { hitDie: 8, savingThrows: ['str', 'dex'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 3, subclassLabel: null, spellcasting: null, spellcastingAbility: null, preparation: null },
+  paladin: { hitDie: 10, savingThrows: ['wis', 'cha'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 3, subclassLabel: null, spellcasting: 'half', spellcastingAbility: 'cha', preparation: 'prepared' },
+  ranger: { hitDie: 10, savingThrows: ['str', 'dex'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 3, subclassLabel: null, spellcasting: 'half', spellcastingAbility: 'wis', preparation: 'known' },
+  rogue: { hitDie: 8, savingThrows: ['dex', 'int'], asiLevels: [4, 8, 10, 12, 16, 19], subclassLevel: 3, subclassLabel: null, spellcasting: null, spellcastingAbility: null, preparation: null },
+  sorcerer: { hitDie: 6, savingThrows: ['con', 'cha'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 1, subclassLabel: null, spellcasting: 'full', spellcastingAbility: 'cha', preparation: 'known' },
+  warlock: { hitDie: 8, savingThrows: ['wis', 'cha'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 1, subclassLabel: null, spellcasting: 'pact', spellcastingAbility: 'cha', preparation: 'known' },
+  wizard: { hitDie: 6, savingThrows: ['int', 'wis'], asiLevels: [4, 8, 12, 16, 19], subclassLevel: 2, subclassLabel: null, spellcasting: 'full', spellcastingAbility: 'int', preparation: 'prepared' },
 };
 
 export function classRules(classId: string): ClassRules | null {

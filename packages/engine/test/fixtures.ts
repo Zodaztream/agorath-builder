@@ -12,7 +12,9 @@ import type {
   ClassEntry,
   FeatEntry,
   ItemEntry,
+  OptionEntry,
   RaceEntry,
+  SubclassEntry,
 } from '../src/types.ts';
 
 const PHB = (page: number) => ({ book: 'PHB', page });
@@ -30,6 +32,14 @@ export const fighter: ClassEntry = {
       { shape: 'proficiency.grant', kind: 'armor', ids: ['light', 'medium', 'heavy', 'shield'] },
       { shape: 'proficiency.grant', kind: 'weapon', ids: ['simple', 'martial'] },
     ] },
+    { id: 'fighter-skills', name: 'Skills', level: 1, summary: 'Choose two skills from the fighter list.', effects: [
+      { shape: 'choice.offer', pool: 'skill:fighter', label: 'Skills', count: 2,
+        from: ['acrobatics', 'animal-handling', 'athletics', 'history', 'insight', 'intimidation', 'perception', 'survival'],
+        grants: [{ shape: 'proficiency.grant' }] },
+    ] },
+    { id: 'fighter-fighting-style', name: 'Fighting Style', level: 1, summary: 'Choose one of the following options.', effects: [
+      { shape: 'choice.offer', pool: 'fighting-style', label: 'Fighting Style', count: 1, from: null, grants: [] },
+    ] },
     { id: 'fighter-second-wind', name: 'Second Wind', level: 1, summary: 'Regain hit points as a bonus action once per rest.', effects: [] },
     { id: 'fighter-action-surge', name: 'Action Surge', level: 2, summary: 'Take one additional action once per rest.', effects: [] },
     { id: 'fighter-extra-attack', name: 'Extra Attack', level: 5, summary: 'Attack twice whenever you take the Attack action.', effects: [{ shape: 'attack.count', value: 1 }] },
@@ -44,6 +54,7 @@ export const rogue: ClassEntry = {
     { id: 'rogue-proficiencies', name: 'Proficiencies', level: 1, summary: 'Light armour, simple weapons, thieves’ tools.', effects: [
       { shape: 'proficiency.grant', kind: 'armor', ids: ['light'] },
       { shape: 'proficiency.grant', kind: 'weapon', ids: ['simple'] },
+      { shape: 'proficiency.grant', kind: 'tool', ids: ['thieves-tools'] },
     ] },
     // NOTE: Sneak Attack really requires finesse *or* a ranged weapon. The
     // scope filter is conjunctive and cannot express "or", so the rider is
@@ -51,10 +62,20 @@ export const rogue: ClassEntry = {
     { id: 'rogue-sneak-attack', name: 'Sneak Attack', level: 1, summary: 'Once per turn, deal extra damage when you have advantage.', effects: [
       { shape: 'damage.dice', dice: { count: 1, die: 6 }, damageType: 'slashing', label: 'Sneak Attack', condition: { optional: true, label: 'Sneak Attack' } },
     ] },
-    { id: 'rogue-skills', name: 'Skills', level: 1, summary: 'Test fixture: the two skills this rogue chose.', effects: [
-      { shape: 'proficiency.grant', kind: 'skill', ids: ['stealth', 'sleight-of-hand'] },
+    { id: 'rogue-skills', name: 'Skills', level: 1, summary: 'Choose four skills from the rogue list.', effects: [
+      { shape: 'choice.offer', pool: 'skill:rogue', label: 'Skills', count: 4,
+        from: ['acrobatics', 'athletics', 'deception', 'insight', 'intimidation', 'investigation',
+               'perception', 'performance', 'persuasion', 'sleight-of-hand', 'stealth'],
+        grants: [{ shape: 'proficiency.grant' }] },
     ] },
-    { id: 'rogue-expertise', name: 'Expertise', level: 1, summary: 'Double your proficiency bonus for two chosen skills.', effects: [] },
+    // PHB 96: "choose two of your skill proficiencies, or one of your skill
+    // proficiencies and your proficiency with thieves' tools." The pool is what
+    // makes the second form expressible, and what makes expertise in a skill
+    // the character lacks impossible rather than silently ignored.
+    { id: 'rogue-expertise', name: 'Expertise', level: 1, summary: 'Choose two of your proficiencies; your proficiency bonus is doubled for them.', effects: [
+      { shape: 'choice.offer', pool: 'proficient:skill+tool', label: 'Expertise', count: 2, from: null,
+        grants: [{ shape: 'proficiency.expertise' }] },
+    ] },
   ],
 };
 
@@ -98,8 +119,8 @@ export const bard: ClassEntry = {
   name: 'Bard',
   source: PHB(51),
   features: [
-    { id: 'bard-jack-of-all-trades', name: 'Jack of All Trades', level: 2, summary: 'Add half your proficiency bonus to any ability check you are not proficient in.', effects: [
-      { shape: 'proficiency.half', kind: 'skill' },
+    { id: 'bard-jack-of-all-trades', name: 'Jack of All Trades', level: 2, summary: 'Add half your proficiency bonus, rounded down, to any ability check you are not proficient in.', effects: [
+      { shape: 'proficiency.half', kind: 'skill', round: 'down' },
     ] },
   ],
 };
@@ -108,6 +129,74 @@ export const wizard: ClassEntry = { id: 'wizard', name: 'Wizard', source: PHB(11
 export const paladin: ClassEntry = { id: 'paladin', name: 'Paladin', source: PHB(82), features: [] };
 export const warlock: ClassEntry = { id: 'warlock', name: 'Warlock', source: PHB(105), features: [] };
 export const cleric: ClassEntry = { id: 'cleric', name: 'Cleric', source: PHB(56), features: [] };
+
+// ---------------------------------------------------------------------------
+// Subclasses — the one pool member that carries features rather than effects
+// ---------------------------------------------------------------------------
+
+export const champion: SubclassEntry = {
+  id: 'champion',
+  name: 'Champion',
+  class: 'fighter',
+  features: [
+    { id: 'champion-improved-critical', name: 'Improved Critical', level: 3, summary: 'Your weapon attacks score a critical hit on a roll of 19 or 20.', effects: [
+      { shape: 'attack.crit-range', minimum: 19 },
+    ] },
+    // PHB 72 says "round up" where Jack of All Trades says "round down", and
+    // the scope is the three physical abilities.
+    { id: 'champion-remarkable-athlete', name: 'Remarkable Athlete', level: 7, summary: 'Add half your proficiency bonus, rounded up, to any Strength, Dexterity or Constitution check that does not already use it.', effects: [
+      { shape: 'proficiency.half', kind: 'skill', round: 'up', scope: { kind: 'check', abilities: ['str', 'dex', 'con'] } },
+    ] },
+    { id: 'champion-additional-fighting-style', name: 'Additional Fighting Style', level: 10, summary: 'Choose a second option from the Fighting Style class feature.', effects: [
+      { shape: 'choice.offer', pool: 'fighting-style', label: 'Fighting Style', count: 1, from: null, grants: [] },
+    ] },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// Options — pool members that carry their own effects
+// ---------------------------------------------------------------------------
+
+export const archery: OptionEntry = {
+  id: 'fighting-style-archery', name: 'Archery', pool: 'fighting-style',
+  summary: 'You gain a +2 bonus to attack rolls you make with ranged weapons.',
+  prerequisites: [],
+  effects: [{ shape: 'attack.bonus', amount: 2, scope: { kind: 'weapon', ranged: true } }],
+};
+
+export const defense: OptionEntry = {
+  id: 'fighting-style-defense', name: 'Defense', pool: 'fighting-style',
+  summary: 'While you are wearing armor, you gain a +1 bonus to AC.',
+  prerequisites: [],
+  effects: [{ shape: 'ac.bonus', amount: 1 }],
+};
+
+/** One gated by level, one by another feature, so prerequisites can be tested. */
+export const agonizingBlast: OptionEntry = {
+  id: 'invocation-agonizing-blast', name: 'Agonizing Blast', pool: 'invocation',
+  summary: 'Add your Charisma modifier to the damage of eldritch blast.',
+  prerequisites: ['totalLevel >= 5'],
+  effects: [{ shape: 'damage.bonus', amount: 2, scope: { kind: 'weapon', ranged: true } }],
+};
+
+export const eldritchSpear: OptionEntry = {
+  id: 'invocation-eldritch-spear', name: 'Eldritch Spear', pool: 'invocation',
+  summary: 'Eldritch blast has a range of 300 feet.',
+  prerequisites: ['hasFeature("fighter-extra-attack")'],
+  effects: [],
+};
+
+/**
+ * The trap: "extra-attack" is Extra Attack's *name*, not its id, and
+ * `hasFeature()` resolves ids. This prerequisite can never be met, which is
+ * exactly what a pack author would not notice.
+ */
+export const nameTrap: OptionEntry = {
+  id: 'invocation-name-trap', name: 'Name Trap', pool: 'invocation',
+  summary: 'Fixture: a prerequisite written against a display name.',
+  prerequisites: ['hasFeature("extra-attack")'],
+  effects: [],
+};
 
 // ---------------------------------------------------------------------------
 // Race, background, feat
@@ -135,6 +224,13 @@ export const tough: FeatEntry = {
   id: 'tough',
   name: 'Tough',
   effects: [{ shape: 'hp.per-level', amount: 2 }],
+};
+
+/** A feat that raises a score, which is what makes collection order matter. */
+export const tavernBrawler: FeatEntry = {
+  id: 'tavern-brawler',
+  name: 'Tavern Brawler',
+  effects: [{ shape: 'ability.increase', ability: 'str', amount: 1 }],
 };
 
 export const grappler: FeatEntry = { id: 'grappler', name: 'Grappler', effects: [] };
@@ -182,5 +278,7 @@ export const leatherArmor = armour('leather', 'Leather Armor', 'light', 11, null
 export const shield = armour('shield', 'Shield', 'shield', 2, 0);
 
 export const ALL_CLASSES = [fighter, rogue, barbarian, monk, bard, wizard, paladin, warlock, cleric];
+export const ALL_SUBCLASSES = [champion];
+export const ALL_OPTIONS = [archery, defense, agonizingBlast, eldritchSpear, nameTrap];
 export const ALL_ITEMS = [longsword, greataxe, dagger, shortbow, chainMail, scaleMail, studdedLeather, leatherArmor, shield];
-export const ALL_FEATS = [tough, grappler];
+export const ALL_FEATS = [tough, tavernBrawler, grappler];

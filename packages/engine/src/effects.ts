@@ -9,6 +9,7 @@
 
 import type {
   Ability,
+  ChoiceGrant,
   DamageType,
   Dice,
   Effect,
@@ -106,6 +107,32 @@ export interface ResourceGrant {
   readonly recharge: 'short' | 'long';
 }
 
+/**
+ * Half proficiency on checks you are not proficient in. A *list* rather than a
+ * flag, because the roundings differ: Jack of All Trades rounds down (PHB 54)
+ * and Remarkable Athlete rounds up (PHB 72), and at proficiency +3 the two
+ * disagree.
+ */
+export interface HalfProficiencyGrant {
+  readonly round: 'up' | 'down';
+  readonly scope: Scope | undefined;
+  readonly label: string;
+}
+
+/**
+ * One feature's "choose N from a pool". Entitlement is the sum of `count`
+ * across every offer for a pool, which is why a second Fighting Style at 10th
+ * level needs no arithmetic — it is a second feature making a second offer.
+ */
+export interface OfferGrant {
+  readonly pool: string;
+  readonly label: string;
+  readonly count: number;
+  readonly from: readonly string[] | null;
+  readonly grants: readonly ChoiceGrant[];
+  readonly origin: string;
+}
+
 export interface FeatureNote {
   readonly name: string;
   readonly level: number;
@@ -113,14 +140,21 @@ export interface FeatureNote {
 }
 
 export interface Accumulator {
+  /**
+   * Ability increases from content, not from race or an ASI choice. They are
+   * collected *before* abilities resolve, because a feat or a picked option can
+   * raise a score and everything downstream has to see it.
+   */
+  readonly abilityIncreases: Record<Ability, number>;
   readonly skillProficiencies: Set<SkillId>;
   readonly skillExpertise: Set<SkillId>;
+  readonly toolExpertise: Set<string>;
   readonly saveProficiencies: Set<Ability>;
   readonly toolProficiencies: Set<string>;
   readonly armorProficiencies: Set<string>;
   readonly weaponProficiencies: Set<string>;
-  /** Jack of All Trades: half proficiency on ability checks you lack. */
-  halfProficiencySkills: boolean;
+  /** Every half-proficiency rule the character has, keeping its rounding. */
+  readonly halfProficiency: HalfProficiencyGrant[];
   /** Reliable Talent and kin: a floor on the d20 result of a proficient check. */
   checkFloor: number | null;
 
@@ -137,6 +171,8 @@ export interface Accumulator {
   readonly damageBonuses: ScopedAmount[];
   readonly damageDice: ScopedDice[];
   extraAttacks: number;
+  /** The lowest d20 roll that crits. 20, unless a feature lowers it. */
+  critMinimum: number;
   unarmedDie: number | null;
 
   initiativeBonus: number;
@@ -144,18 +180,22 @@ export interface Accumulator {
 
   readonly spellcasting: SpellcastingGrant[];
   readonly resources: ResourceGrant[];
+  /** Every "choose N from a pool" the character's features offer. */
+  readonly offers: OfferGrant[];
   readonly notes: FeatureNote[];
 }
 
 export function emptyAccumulator(): Accumulator {
   return {
+    abilityIncreases: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
     skillProficiencies: new Set(),
     skillExpertise: new Set(),
+    toolExpertise: new Set(),
     saveProficiencies: new Set(),
     toolProficiencies: new Set(),
     armorProficiencies: new Set(),
     weaponProficiencies: new Set(),
-    halfProficiencySkills: false,
+    halfProficiency: [],
     checkFloor: null,
     acFormulas: [],
     acBonuses: [],
@@ -167,11 +207,13 @@ export function emptyAccumulator(): Accumulator {
     damageBonuses: [],
     damageDice: [],
     extraAttacks: 0,
+    critMinimum: 20,
     unarmedDie: null,
     initiativeBonus: 0,
     spellDcBonus: 0,
     spellcasting: [],
     resources: [],
+    offers: [],
     notes: [],
   };
 }
@@ -197,8 +239,9 @@ function scoped(effect: Effect): { scope: Scope | undefined; conditional: boolea
 export function collectEffect(acc: Accumulator, effect: Effect, origin: string): void {
   switch (effect.shape) {
     case 'ability.increase':
-      // Handled in the ability pass, which must run before anything that reads
-      // a modifier. Reaching here would mean the ordering broke.
+      // Collected, not applied here: the ability pass reads this before it
+      // computes a modifier. Collection therefore has to run first.
+      acc.abilityIncreases[effect.ability] += effect.amount;
       break;
 
     case 'proficiency.grant':
@@ -212,12 +255,19 @@ export function collectEffect(acc: Accumulator, effect: Effect, origin: string):
       break;
 
     case 'proficiency.expertise':
-      for (const id of effect.ids) acc.skillExpertise.add(id as SkillId);
+      // Expertise in a tool is a real choice, not a curiosity: PHB 96 offers a
+      // rogue thieves' tools as an alternative to a second skill.
+      for (const id of effect.ids) {
+        if (effect.kind === 'skill') acc.skillExpertise.add(id as SkillId);
+        else acc.toolExpertise.add(id);
+      }
       break;
 
-    case 'proficiency.half':
-      acc.halfProficiencySkills = true;
+    case 'proficiency.half': {
+      const s = scoped(effect);
+      acc.halfProficiency.push({ round: effect.round, scope: s.scope, label: s.label || origin });
       break;
+    }
 
     case 'check.floor':
       acc.checkFloor = acc.checkFloor === null ? effect.value : Math.max(acc.checkFloor, effect.value);
@@ -290,6 +340,12 @@ export function collectEffect(acc: Accumulator, effect: Effect, origin: string):
       acc.extraAttacks = Math.max(acc.extraAttacks, effect.value);
       break;
 
+    case 'attack.crit-range':
+      // Improved Critical (19) and Superior Critical (18) do not add up: the
+      // wider range wins, so take the lowest.
+      acc.critMinimum = Math.min(acc.critMinimum, effect.minimum);
+      break;
+
     case 'unarmed.die':
       acc.unarmedDie = acc.unarmedDie === null ? effect.die : Math.max(acc.unarmedDie, effect.die);
       break;
@@ -312,7 +368,20 @@ export function collectEffect(acc: Accumulator, effect: Effect, origin: string):
       break;
 
     case 'resource.pool':
+      // Duplicate ids are kept here rather than merged: `max` is an expression,
+      // so taking the maximum means evaluating both, which the pipeline does.
       acc.resources.push({ id: effect.id, max: effect.max, recharge: effect.recharge });
+      break;
+
+    case 'choice.offer':
+      acc.offers.push({
+        pool: effect.pool,
+        label: effect.label,
+        count: effect.count,
+        from: effect.from,
+        grants: effect.grants,
+        origin,
+      });
       break;
   }
 }

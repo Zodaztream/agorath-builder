@@ -75,13 +75,16 @@ export interface PackRef {
  */
 export interface LevelEntry {
   readonly class: string;
-  readonly subclass: string | null;
   /**
    * Hit points for this level. Ignored at character level 1, which always
    * takes the maximum of the hit die.
    */
   readonly hp: HitPointRoll;
-  /** Choices made at this level: ASI-or-feat, expertise, subclass features. */
+  /**
+   * Choices made at this level: ASI-or-feat, and every "choose N from a list"
+   * — a subclass, a skill list, expertise, a fighting style. See `LevelChoice`
+   * and `choice.offer`.
+   */
   readonly choices: readonly LevelChoice[];
 }
 
@@ -92,11 +95,17 @@ export type HitPointRoll =
 /**
  * A choice made at a level. A discriminated union rather than a loose
  * kind/value pair, so an ASI cannot be silently mistyped into a no-op.
+ *
+ * `select` is every "choose N from a list" — subclass selection, a class's
+ * skill list, expertise, a fighting style. Which pools are available, and how
+ * many picks each allows, is computed from the character's own features rather
+ * than stored here, so a pick can never be entitled to something the character
+ * has not reached the level for.
  */
 export type LevelChoice =
   | { readonly kind: 'asi'; readonly increases: readonly AbilityIncrease[] }
   | { readonly kind: 'feat'; readonly feat: string }
-  | { readonly kind: 'expertise'; readonly skills: readonly SkillId[] }
+  | { readonly kind: 'select'; readonly pool: string; readonly picks: readonly string[] }
   | { readonly kind: 'other'; readonly id: string; readonly value: string };
 
 export interface InventoryItem {
@@ -171,11 +180,35 @@ export interface ClassEntry {
   readonly features: readonly FeatureEntry[];
 }
 
+/**
+ * A subclass is a pool member too — the pool is `subclass:<classId>`, resolved
+ * from this `class` field. It differs from an `OptionEntry` in carrying
+ * *features*, which arrive level by level, rather than flat effects.
+ */
 export interface SubclassEntry {
   readonly id: string;
   readonly name: string;
   readonly class: string;
   readonly features: readonly FeatureEntry[];
+}
+
+/**
+ * One option in a pool: a fighting style, a manoeuvre, an eldritch invocation,
+ * a metamagic, a pact boon.
+ *
+ * Membership is the `pool` tag rather than a list held somewhere else, so
+ * adding an option is one file and nothing to keep in sync. The weakness of a
+ * tag — a typo silently offering an empty list — is closed by the entitlement
+ * check in `derive`, which diagnoses an offer with no members.
+ */
+export interface OptionEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly pool: string;
+  readonly summary: string;
+  /** Expressions over the character. An unmet one is a diagnostic. */
+  readonly prerequisites: readonly string[];
+  readonly effects: readonly Effect[];
 }
 
 export interface SpellcastingProfile {
@@ -282,10 +315,10 @@ export type Effect = EffectShape & {
  * a feature that fits no shape is `feature.text` and computes nothing.
  */
 export type EffectShape =
-  | { readonly shape: 'ability.increase'; readonly ability: Ability; readonly amount: number; readonly max: number }
+  | { readonly shape: 'ability.increase'; readonly ability: Ability; readonly amount: number }
   | { readonly shape: 'proficiency.grant'; readonly kind: 'skill' | 'save' | 'tool' | 'armor' | 'weapon'; readonly ids: readonly string[] }
-  | { readonly shape: 'proficiency.expertise'; readonly kind: 'skill'; readonly ids: readonly string[] }
-  | { readonly shape: 'proficiency.half'; readonly kind: 'skill' }
+  | { readonly shape: 'proficiency.expertise'; readonly kind: 'skill' | 'tool'; readonly ids: readonly string[] }
+  | { readonly shape: 'proficiency.half'; readonly kind: 'skill'; readonly round: 'up' | 'down' }
   | { readonly shape: 'check.floor'; readonly value: number }
   | { readonly shape: 'check.advantage' }
   | { readonly shape: 'ac.formula'; readonly label: string; readonly base: number; readonly abilities: readonly Ability[]; readonly allowShield: boolean; readonly requiresNoArmor: boolean; readonly requiresNoShield: boolean }
@@ -298,14 +331,33 @@ export type EffectShape =
   | { readonly shape: 'damage.bonus'; readonly amount: number }
   | { readonly shape: 'damage.dice'; readonly dice: Dice; readonly damageType: DamageType; readonly label: string }
   | { readonly shape: 'attack.count'; readonly value: number }
+  | { readonly shape: 'attack.crit-range'; readonly minimum: number }
   | { readonly shape: 'unarmed.die'; readonly die: number }
   | { readonly shape: 'spellcasting.grant'; readonly classId: string; readonly ability: Ability; readonly progression: 'full' | 'half' | 'third' | 'pact'; readonly preparation: 'prepared' | 'known' }
   | { readonly shape: 'spell.dc.bonus'; readonly amount: number }
   | { readonly shape: 'initiative.bonus'; readonly amount: number }
-  | { readonly shape: 'resource.pool'; readonly id: string; readonly max: string; readonly recharge: 'short' | 'long' };
+  | { readonly shape: 'resource.pool'; readonly id: string; readonly max: string; readonly recharge: 'short' | 'long' }
+  | { readonly shape: 'choice.offer'; readonly pool: string; readonly label: string; readonly count: number; readonly from: readonly string[] | null; readonly grants: readonly ChoiceGrant[] };
   // Note: there is deliberately no `feature.text` shape. Every FeatureEntry
   // already carries a name, a level and a summary, and the derivation pass
   // surfaces those as notes. A separate text shape would duplicate that.
+
+/**
+ * What a pick from a *built-in* pool confers — a skill list grants
+ * proficiency, Expertise grants expertise in what it picks.
+ *
+ * Only the id-taking shapes appear here, because the picks supply the ids: a
+ * pick from `skill` is a bare `stealth`, which has no entry of its own to carry
+ * effects. A pick from a pool of entries applies the entry's own effects
+ * instead, and an offer declaring `grants` there is a diagnostic.
+ *
+ * `ids` is absent by design — it is the picks. `kind` is absent too, because a
+ * pool may span kinds: PHB 96 lets a rogue take Expertise in a skill *or* in
+ * thieves' tools, and the member knows which it is.
+ */
+export type ChoiceGrant =
+  | { readonly shape: 'proficiency.grant' }
+  | { readonly shape: 'proficiency.expertise' };
 
 export type EffectShapeId = EffectShape['shape'];
 
@@ -371,6 +423,27 @@ export interface DerivedResource {
   readonly recharge: 'short' | 'long';
 }
 
+/** One thing taken from a pool, resolved to something displayable. */
+export interface DerivedPick {
+  readonly id: string;
+  readonly name: string;
+  readonly pool: string;
+}
+
+/**
+ * A pool the character's features offer, and what has been taken from it.
+ *
+ * `entitled` is computed from the features the character actually has, which is
+ * why a subclass cannot be picked at 1st level on a fighter, and why the UI can
+ * show "1 of 2 chosen" without knowing any rules of its own.
+ */
+export interface DerivedSelection {
+  readonly pool: string;
+  readonly label: string;
+  readonly entitled: number;
+  readonly picks: readonly DerivedPick[];
+}
+
 export interface DerivedSheet {
   readonly name: string;
   readonly totalLevel: number;
@@ -393,8 +466,12 @@ export interface DerivedSheet {
   readonly attacks: readonly DerivedAttack[];
   /** Attacks per Attack action: 1, or 2+ once Extra Attack applies. */
   readonly attacksPerAction: number;
+  /** Lowest d20 roll that scores a critical hit: 20, or lower by feature. */
+  readonly critRange: number;
   readonly spellcasting: readonly DerivedSpellcasting[];
   readonly resources: readonly DerivedResource[];
+  /** Every pool the character was offered, and what was taken from it. */
+  readonly selections: readonly DerivedSelection[];
   /** Things the sheet cannot compute, shown as text. */
   readonly notes: readonly DerivedNote[];
 }
