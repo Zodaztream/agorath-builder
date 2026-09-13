@@ -20,11 +20,28 @@ npm run dev --workspace @agorath/app      # local dev server
 
 # Check a content pack without opening the browser:
 npm run verify --workspace @agorath/content -- path/to/pack.json
+
+# Walk the built site in a real browser, and say what broke:
+npm run walk --workspace @agorath/app -- path/to/pack.json --shots shots
 ```
 
 The app needs a content pack to do anything — it ships with no book content.
 Upload one on the **Content** tab; it is kept in your browser and never sent
 anywhere.
+
+### Walking the built site
+
+`npm test` covers the engine, the pack format and the app's own logic — modules,
+in Node, with no browser. `npm run walk` covers the thing those cannot see: it
+serves `packages/app/dist`, drives headless Chromium, loads a pack through the
+real file input and walks the whole build, failing on any console error and on a
+layout that overflows. `--width 420` is the phone check; `--shots <dir>` writes a
+PNG at each step.
+
+It needs a pack, and packs are never committed here, so it is a script a person
+runs rather than a CI job. Its expectations are written against the slice of
+classes in the pack used for the pilot; another pack means adjusting them, and
+the failure output names the step.
 
 ### Deploying
 

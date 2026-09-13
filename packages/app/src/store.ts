@@ -14,13 +14,16 @@
 
 import {
   derive,
+  type Ability,
+  type AbilityMethod,
+  type AbilityScores,
   type CharacterDefinition,
   type ContentProvider,
   type InventoryItem,
   type LevelChoice,
   type LevelEntry,
-  type Ability,
 } from '@agorath/engine';
+import { seedFor } from './abilities.ts';
 
 export const ABILITY_ORDER: readonly Ability[] = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 
@@ -33,12 +36,22 @@ export const ABILITY_LABELS: Readonly<Record<Ability, string>> = {
   cha: 'Charisma',
 };
 
+/**
+ * A new character, already legal.
+ *
+ * The six scores start as the standard array rather than as six tens, so that
+ * the first thing a player sees on the ability step is a real arrangement to
+ * move around rather than a blank form with no idea what a good number is. The
+ * method is recorded with it, so the step reopens in the editor that produced
+ * it.
+ */
 export function emptyDefinition(name = 'Unnamed character'): CharacterDefinition {
   return {
     ruleset: '2014',
     packs: [],
     name,
-    abilities: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
+    abilityMethod: 'standard-array',
+    abilities: seedFor('standard-array', []),
     levels: [],
     race: null,
     subrace: null,
@@ -46,6 +59,39 @@ export function emptyDefinition(name = 'Unnamed character'): CharacterDefinition
     inventory: [],
     currency: { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
   };
+}
+
+export function setName(definition: CharacterDefinition, name: string): CharacterDefinition {
+  return { ...definition, name };
+}
+
+export function setRace(definition: CharacterDefinition, race: string | null): CharacterDefinition {
+  return { ...definition, race, subrace: null };
+}
+
+export function setBackground(definition: CharacterDefinition, background: string | null): CharacterDefinition {
+  return { ...definition, background };
+}
+
+/**
+ * Choose an ability method, and lay the scores out for it.
+ *
+ * The methods are not interchangeable — a 15 costs nine of point buy's
+ * twenty-seven — so the seed is part of the choice rather than a separate
+ * button. It is the one edit here that discards what the player had, which is
+ * why the step says so before the click.
+ */
+export function setAbilityMethod(
+  definition: CharacterDefinition,
+  method: AbilityMethod,
+  savingThrows: readonly Ability[],
+): CharacterDefinition {
+  return { ...definition, abilityMethod: method, abilities: seedFor(method, savingThrows) };
+}
+
+/** Replace all six scores at once — the array and point-buy editors do this. */
+export function setAbilities(definition: CharacterDefinition, scores: AbilityScores): CharacterDefinition {
+  return { ...definition, abilities: scores };
 }
 
 export function addLevel(definition: CharacterDefinition, classId: string): CharacterDefinition {
@@ -133,14 +179,22 @@ const homeCache = new Map<string, Map<string, number>>();
  * Computed by deriving the character one level at a time, which is cheap (a
  * millisecond) and, more importantly, cannot disagree with the engine — the
  * alternative is re-implementing the class tables here, which is the exact
- * duplication the engine exists to prevent. Memoized on the class sequence,
- * because that is the only thing that can move a pool's home.
+ * duplication the engine exists to prevent.
+ *
+ * Memoized on everything the answer depends on, which is the class sequence
+ * *and* the choices already recorded: a pick can itself bring a pool into
+ * existence (a feat's offer, an expertise), so two characters with the same
+ * class sequence are not the same question. The level-up screen does not need
+ * this — it knows which entry it is writing — but the builder does, for a pool
+ * the player filled in later.
  */
 export function poolHomes(
   definition: CharacterDefinition,
   content: ContentProvider,
 ): ReadonlyMap<string, number> {
-  const key = definition.levels.map((level) => level.class).join('|');
+  const key = definition.levels
+    .map((level) => `${level.class}#${level.choices.map(choiceKey).join(';')}`)
+    .join('|');
   const cached = homeCache.get(key);
   if (cached !== undefined) return cached;
 
@@ -155,6 +209,20 @@ export function poolHomes(
   if (homeCache.size > 32) homeCache.clear();
   homeCache.set(key, homes);
   return homes;
+}
+
+/** A short, stable signature of one level entry's choices, for the cache key. */
+function choiceKey(choice: LevelChoice): string {
+  switch (choice.kind) {
+    case 'select':
+      return `${choice.pool}:${choice.picks.join(',')}`;
+    case 'asi':
+      return `asi:${choice.increases.map((i) => `${i.ability}+${i.amount}`).join(',')}`;
+    case 'feat':
+      return `feat:${choice.feat}`;
+    case 'other':
+      return `other:${choice.id}=${choice.value}`;
+  }
 }
 
 /** The picks currently recorded for a pool, wherever they sit. */

@@ -1,10 +1,15 @@
 /**
- * The shell: pack state, the character, and three screens.
+ * The shell: a pack, a character, and three screens.
  *
- * State here is deliberately thin — a pack, a definition, and which tab is
- * showing. Everything else is `derive(definition, pack)` during render, which
- * is the sanctioned architecture (ADR-0003): full re-render on every change,
- * no state library, and nothing cached that could disagree with the input.
+ * State here is deliberately thin — a pack, a definition, which tab is showing,
+ * and whether a level is being taken. Everything else is `derive(definition,
+ * pack)` during render, which is the sanctioned architecture (ADR-0003): full
+ * re-render on every change, no state library, and nothing cached that could
+ * disagree with the input.
+ *
+ * The level-up page is a *mode* of the Build tab rather than a tab of its own:
+ * levelling is building, it just happens to be the part with a before and an
+ * after.
  */
 
 import { useEffect, useMemo, useState } from 'preact/hooks';
@@ -13,8 +18,10 @@ import { derive, inMemoryContent, type CharacterDefinition } from '@agorath/engi
 import { readPackText, type PackReadResult } from '@agorath/content';
 import { clearPack, loadPack, savePack } from './pack-store.ts';
 import { emptyDefinition, poolHomes } from './store.ts';
+import { emptyDraft, type LevelDraft } from './level-up.ts';
 import { PackScreen } from './screens/pack-screen.tsx';
 import { BuildScreen } from './screens/build-screen.tsx';
+import { LevelUpScreen } from './screens/level-up-screen.tsx';
 import { SheetScreen } from './screens/sheet-screen.tsx';
 
 const CHARACTER_KEY = 'agorath.character';
@@ -27,6 +34,8 @@ export function App(): JSX.Element {
   const [remembered, setRemembered] = useState(false);
   const [definition, setDefinition] = useState<CharacterDefinition>(() => loadCharacter());
   const [tab, setTab] = useState<Tab>('pack');
+  /** Set while a level is being taken; the Build tab shows the level-up page. */
+  const [draft, setDraft] = useState<LevelDraft | null>(null);
 
   // A remembered pack is what makes this a tool rather than a chore: the
   // upload is once per browser, not once per visit.
@@ -78,6 +87,25 @@ export function App(): JSX.Element {
     setRemembered(false);
   };
 
+  /**
+   * Begin a level.
+   *
+   * The draft starts on the class the character last advanced, because that is
+   * what continuing to level almost always means; the page offers every other
+   * class, and multiclassing, as its first question.
+   */
+  const beginLevel = (): void => {
+    const last = definition.levels[definition.levels.length - 1]?.class
+      ?? packResult?.catalog.classes[0]?.id;
+    if (last === undefined) return;
+    setDraft(emptyDraft(last));
+  };
+
+  const commitLevel = (next: CharacterDefinition): void => {
+    setDefinition(next);
+    setDraft(null);
+  };
+
   const exportCharacter = (): void => {
     // ADR-0006: the file carries the definition, and a `session` seam a later
     // version fills in. Nothing derived is ever written.
@@ -101,6 +129,7 @@ export function App(): JSX.Element {
           return;
         }
         setDefinition(incoming);
+        setDraft(null);
         setTab('build');
       } catch {
         window.alert('That file is not a character this tool wrote.');
@@ -110,7 +139,7 @@ export function App(): JSX.Element {
 
   const errorCount = packResult?.errors.length ?? 0;
   const diagnosticCount = sheet.diagnostics.length;
-  const packLoaded = packResult?.meta !== null && packResult !== null;
+  const packLoaded = packResult !== null && packResult.meta !== null;
 
   return (
     <div class="app">
@@ -146,7 +175,20 @@ export function App(): JSX.Element {
           </p>
         )}
 
-        {tab === 'build' && packLoaded && packResult !== null && (
+        {tab === 'build' && packLoaded && packResult !== null && draft !== null && (
+          <LevelUpScreen
+            definition={definition}
+            content={content}
+            catalog={packResult.catalog}
+            sheet={sheet}
+            draft={draft}
+            onDraft={setDraft}
+            onCancel={() => setDraft(null)}
+            onCommit={commitLevel}
+          />
+        )}
+
+        {tab === 'build' && packLoaded && packResult !== null && draft === null && (
           <BuildScreen
             definition={definition}
             content={content}
@@ -154,6 +196,9 @@ export function App(): JSX.Element {
             sheet={sheet}
             homes={homes}
             onChange={setDefinition}
+            onExport={exportCharacter}
+            onImport={importCharacter}
+            onAdvance={beginLevel}
           />
         )}
 
@@ -161,7 +206,7 @@ export function App(): JSX.Element {
           <SheetScreen
             definition={definition}
             sheet={sheet}
-            packLabel={packResult?.meta === null || packResult === null ? '' : `${packResult.meta.name} v${packResult.meta.version}`}
+            packLabel={packResult === null || packResult.meta === null ? '' : `${packResult.meta.name} v${packResult.meta.version}`}
             onExport={exportCharacter}
             onImport={importCharacter}
           />

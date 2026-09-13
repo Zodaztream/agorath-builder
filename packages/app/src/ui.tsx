@@ -58,14 +58,4 @@ export function Stat(props: { label: string; value: string | number; hint?: stri
   );
 }
 
-export function signed(value: number): string {
-  return value >= 0 ? `+${value}` : `${value}`;
-}
-
-/** `{ count: 2, die: 6 }` → `2d6`; a null dice is a flat number. */
-export function diceText(dice: { count: number; die: number } | null, flat: number): string {
-  const dicePart = dice === null ? '' : `${dice.count}d${dice.die}`;
-  if (dicePart === '') return `${flat}`;
-  if (flat === 0) return dicePart;
-  return `${dicePart} ${flat >= 0 ? '+' : '-'} ${Math.abs(flat)}`;
-}
+export { diceText, signed } from './text.ts';

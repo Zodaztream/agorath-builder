@@ -4,7 +4,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": [],
+    "types": ["node"],
 
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
@@ -29,5 +29,5 @@
       "@agorath/content": ["../content/src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "scripts/**/*.ts", "vite.config.ts"]
 }
