@@ -42,8 +42,11 @@ jobs:
       - name: Build the app
         run: npm run build --workspace @agorath/app
 
-      # `enablement: true` turns Pages on with the workflow token if it is not
-      # already on, so the first deploy does not need a settings change first.
+      # `enablement: true` asks GitHub to turn Pages on with the workflow token.
+      # It cannot always: creating the site needs repository admin, which a
+      # workflow token does not have. So the first run may fail here, and the
+      # fix is one setting — Settings → Pages → Source → "GitHub Actions".
+      # After that this step is a no-op and every push deploys.
       - uses: actions/configure-pages@v5
         with:
           enablement: true

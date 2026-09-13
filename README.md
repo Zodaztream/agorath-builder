@@ -26,6 +26,14 @@ The app needs a content pack to do anything — it ships with no book content.
 Upload one on the **Content** tab; it is kept in your browser and never sent
 anywhere.
 
+### Deploying
+
+`.github/workflows/deploy.yml` tests, typechecks, builds and publishes to GitHub
+Pages on every push to `main`. **It needs Pages enabled once**: Settings → Pages
+→ Source → *GitHub Actions*. Until that is set, the build steps pass and the
+`configure-pages` step fails, because creating the Pages site needs repository
+admin and a workflow token does not have it.
+
 ## What it does
 
 - **Character creation and leveling for 5e 2014** — not the 2024 revision, which
