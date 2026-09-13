@@ -1,0 +1,26 @@
+{
+  "name": "@agorath/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The character builder: a static site, Preact + TSX + Vite.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agorath/content": "*",
+    "@agorath/engine": "*",
+    "preact": "^10.24.0"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

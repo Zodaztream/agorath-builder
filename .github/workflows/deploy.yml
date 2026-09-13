@@ -1,0 +1,63 @@
+# Build the app and publish it to GitHub Pages (ADR-0001, ADR-0005).
+#
+# The site carries no book content: it ships the engine and an empty shell, and
+# a content pack is uploaded in the browser at runtime (ADR-0002). Nothing here
+# needs a secret, and nothing is deployed that the tests have not passed.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test --workspaces --if-present
+
+      - name: Typecheck
+        run: npm run typecheck --workspaces --if-present
+
+      - name: Build the app
+        run: npm run build --workspace @agorath/app
+
+      # `enablement: true` turns Pages on with the workflow token if it is not
+      # already on, so the first deploy does not need a settings change first.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/app/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

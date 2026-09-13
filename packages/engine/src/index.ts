@@ -21,8 +21,10 @@ export type {
   CustomItem,
   DamageType,
   DerivedAbility,
+  DerivedAdvancement,
   DerivedAttack,
   DerivedDamageComponent,
+  DerivedDice,
   DerivedNote,
   DerivedPick,
   DerivedResource,
@@ -53,7 +55,7 @@ export type {
   WeaponEntry,
 } from './types.ts';
 
-export { ABILITIES, ABILITY_NAMES, DAMAGE_TYPES, EMPTY_CURRENCY } from './types.ts';
+export { ABILITIES, ABILITY_NAMES, DAMAGE_TYPES, EFFECT_SHAPES, EFFECT_SHAPE_IDS, EMPTY_CURRENCY } from './types.ts';
 
 export {
   ABILITY_CAP,

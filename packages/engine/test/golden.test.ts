@@ -11,8 +11,8 @@ import assert from 'node:assert/strict';
 
 import { inMemoryContent } from '../src/content.ts';
 import { derive } from '../src/derive.ts';
-import { EMPTY_CURRENCY, type Ability, type AbilityScores, type CharacterDefinition, type ClassEntry, type InventoryItem, type LevelChoice, type LevelEntry } from '../src/types.ts';
-import { ALL_CLASSES, ALL_FEATS, ALL_ITEMS, ALL_OPTIONS, ALL_SUBCLASSES, fighter, human, soldier } from './fixtures.ts';
+import { EMPTY_CURRENCY, type Ability, type DerivedDice, type AbilityScores, type CharacterDefinition, type ClassEntry, type InventoryItem, type LevelChoice, type LevelEntry } from '../src/types.ts';
+import { ALL_CLASSES, ALL_FEATS, ALL_ITEMS, ALL_OPTIONS, ALL_SUBCLASSES, fighter, human, rogue, soldier } from './fixtures.ts';
 
 const content = inMemoryContent({
   classes: ALL_CLASSES,
@@ -345,6 +345,26 @@ test('a conditional rider is reported, not silently added', () => {
   assert.equal(axe.damage[0]?.flat, 3);
   assert.equal(axe.toHit, 5);
   assert.ok(axe.notes.some((n) => n.includes('Raging')), `expected a Rage note, got ${JSON.stringify(axe.notes)}`);
+});
+
+test('a scope can say "or", which Sneak Attack needs', () => {
+  // PHB 96 gates Sneak Attack on the weapon being finesse or ranged — a weapon,
+  // and then one of two things. The conjunction alone could not express it.
+  const withWeapon = (item: string) => derive(build({
+    levels: [at('rogue')],
+    abilities: { str: 16, dex: 16 },
+    inventory: [held(item)],
+  }), content);
+
+  const rider = (sheet: ReturnType<typeof derive>, name: string) =>
+    attackNamed(sheet, name).damage.some((d) => d.label === 'Sneak Attack');
+
+  // A dagger is finesse, a shortbow is ranged — both qualify.
+  assert.equal(rider(withWeapon('dagger'), 'Dagger'), true);
+  assert.equal(rider(withWeapon('shortbow'), 'Shortbow'), true);
+
+  // A greataxe is neither, so the rider is not on that line at all.
+  assert.equal(rider(withWeapon('greataxe'), 'Greataxe'), false);
 });
 
 test('a feature is collected once, not once per level', () => {
@@ -737,6 +757,162 @@ test('an ability score improvement is only allowed at an ASI level', () => {
     abilities: { str: 12 },
   }), content);
   assert.deepEqual(sixth.diagnostics, []);
+});
+
+test('a selection reports what the pool offers, so a picker can be rendered', () => {
+  const sheet = derive(build({ levels: [at('fighter'), at('fighter')] }), content);
+
+  const skills = sheet.selections.find((s) => s.pool === 'skill:fighter');
+  assert.equal(skills?.entitled, 2);
+  // The eight the fighter chooses between, not the eighteen that exist.
+  assert.deepEqual(skills?.candidates.map((c) => c.id).sort(), [
+    'acrobatics', 'animal-handling', 'athletics', 'history',
+    'insight', 'intimidation', 'perception', 'survival',
+  ]);
+  assert.deepEqual(skills?.picks, []);
+
+  // A content pool offers its entries by name, so the UI never needs the pack.
+  const styles = sheet.selections.find((s) => s.pool === 'fighting-style');
+  assert.deepEqual(styles?.candidates.map((c) => c.name), ['Archery', 'Defense']);
+
+  // Before 3rd level the class offers no archetype, so there is no pool to
+  // render at all — not an empty one.
+  const one = derive(build({ levels: [at('fighter'), at('fighter')] }), content);
+  assert.equal(one.selections.find((s) => s.pool === 'subclass:fighter'), undefined);
+
+  const three = derive(build({ levels: [at('fighter'), at('fighter'), at('fighter')] }), content);
+  assert.deepEqual(three.selections.find((s) => s.pool === 'subclass:fighter')?.candidates.map((c) => c.name), ['Champion']);
+});
+
+test('advancements report where an ASI-or-feat is owed', () => {
+  const sheet = derive(build({
+    levels: [at('fighter'), at('fighter'), at('fighter'),
+             at('fighter', { choices: [asi({ ability: 'str', amount: 2 })] }),
+             at('fighter'), at('fighter')],
+    abilities: { str: 12 },
+  }), content);
+
+  // Fighter ASI levels are 4, 6, 8, 12, 14, 16, 19 (PHB 72).
+  assert.deepEqual(sheet.advancements, [
+    { level: 3, classId: 'fighter', classLevel: 4, kind: 'asi-or-feat', taken: true },
+    { level: 5, classId: 'fighter', classLevel: 6, kind: 'asi-or-feat', taken: false },
+  ]);
+});
+
+test("a magic weapon's bonus applies to that weapon, and not to the others", () => {
+  // `scope` was written for features — Archery applies to every ranged weapon.
+  // An item's bonus is a property of the item, and a +1 longsword that also
+  // sharpened the greataxe would be wrong in a way nobody would notice.
+  const sheet = derive(build({
+    levels: [at('fighter')],
+    abilities: { str: 16 },
+    inventory: [held('longsword-plus-1'), held('greataxe')],
+  }), content);
+
+  const sword = attackNamed(sheet, 'Longsword +1');
+  assert.equal(sword.toHit, 3 + 2 + 1);
+  assert.equal(sword.damage[0]?.flat, 3 + 1);
+
+  const axe = attackNamed(sheet, 'Greataxe');
+  assert.equal(axe.toHit, 3 + 2);
+  assert.equal(axe.damage[0]?.flat, 3);
+});
+
+test('a worn item keeps its effect global, because it is not a weapon line', () => {
+  const sheet = derive(build({
+    levels: [at('fighter')],
+    abilities: { str: 16 },
+    inventory: [held('cloak-of-protection')],
+  }), content);
+
+  assert.equal(sheet.armorClass, 10 + 0 + 1);   // 10 + DEX 0, plus the cloak
+  assert.equal(sheet.diagnostics.length, 0);
+});
+
+test('a custom item is built on a real base, so its mundane statistics are the base\'s', () => {
+  const custom = {
+    id: 'custom-fang', name: "Vesaria's Fang", tier: 'custom' as const, base: 'longsword',
+    effects: [
+      { shape: 'attack.bonus' as const, amount: 1 },
+      { shape: 'damage.bonus' as const, amount: 1 },
+      { shape: 'damage.dice' as const, dice: { count: 1, die: 6 }, damageType: 'fire' as const, label: 'Flame' },
+    ],
+  };
+
+  const sheet = derive(build({
+    levels: [at('fighter')],
+    abilities: { str: 16 },
+    inventory: [{ item: custom.id, quantity: 1, equipped: true, attuned: false, custom }],
+  }), content);
+
+  const fang = attackNamed(sheet, "Vesaria's Fang");
+  // The base longsword supplies d8 slashing; the custom effects sit on top.
+  assert.deepEqual(fang.damage[0]?.dice, { count: 1, die: 8 });
+  assert.equal(fang.damage[0]?.damageType, 'slashing');
+  assert.equal(fang.toHit, 3 + 2 + 1);
+  assert.equal(fang.damage[0]?.flat, 3 + 1);
+  assert.deepEqual(fang.damage[1]?.dice, { count: 1, die: 6 });
+  assert.equal(fang.damage[1]?.damageType, 'fire');
+  assert.deepEqual(sheet.diagnostics, []);
+});
+
+test('a custom item built on a base the pack does not have is diagnosed', () => {
+  const sheet = derive(build({
+    levels: [at('fighter')],
+    inventory: [{
+      item: 'custom-x', quantity: 1, equipped: true, attuned: false,
+      custom: { id: 'custom-x', name: 'Mystery Blade', tier: 'custom', base: 'nonexistent-blade', effects: [] },
+    }],
+  }), content);
+
+  assert.ok(
+    sheet.diagnostics.some((d) => d.includes('Mystery Blade') && d.includes('nonexistent-blade')),
+    JSON.stringify(sheet.diagnostics),
+  );
+});
+
+test('a dice pool can grow with level, which is how Sneak Attack is written', () => {
+  // PHB 95's Sneak Attack column: 1d6 at 1st, 2d6 at 3rd, 3d6 at 5th, 10d6 at
+  // 19th — all on one feature. A fixed count cannot say that.
+  const scaling = inMemoryContent({
+    classes: [{ ...rogue, features: rogue.features.map((feature) =>
+      feature.id === 'rogue-sneak-attack'
+        ? { ...feature, effects: [{ shape: 'damage.dice' as const,
+            dice: { count: '1 + floor((classLevel(rogue) - 1) / 2)', die: 6 },
+            damageType: 'slashing' as const, label: 'Sneak Attack',
+            scope: { kind: 'weapon' as const, or: [{ properties: ['finesse'] }, { ranged: true }] },
+            condition: { optional: true, label: 'Sneak Attack' } }] }
+        : feature) }],
+    items: ALL_ITEMS,
+  });
+
+  const sneakAt = (levels: number): DerivedDice => {
+    const sheet = derive(build({
+      levels: Array.from({ length: levels }, () => at('rogue')),
+      abilities: { dex: 16 },
+      inventory: [held('dagger')],
+    }), scaling);
+    const rider = attackNamed(sheet, 'Dagger').damage.find((d) => d.label === 'Sneak Attack');
+    return rider?.dice ?? { count: -1, die: -1 };
+  };
+
+  assert.deepEqual(sneakAt(1), { count: 1, die: 6 });
+  assert.deepEqual(sneakAt(3), { count: 2, die: 6 });
+  assert.deepEqual(sneakAt(5), { count: 3, die: 6 });
+  assert.deepEqual(sneakAt(19), { count: 10, die: 6 });
+});
+
+test('a dice expression that does not evaluate is a diagnostic, not a crash', () => {
+  const broken = inMemoryContent({
+    classes: [{ ...rogue, features: rogue.features.map((feature) =>
+      feature.id === 'rogue-sneak-attack'
+        ? { ...feature, effects: [{ shape: 'damage.dice' as const,
+            dice: { count: 'nonsense()', die: 6 }, damageType: 'slashing' as const, label: 'Sneak Attack' }] }
+        : feature) }],
+    items: ALL_ITEMS,
+  });
+  const sheet = derive(build({ levels: [at('rogue')], inventory: [held('dagger')] }), broken);
+  assert.ok(sheet.diagnostics.some((d) => d.includes('Sneak Attack')), JSON.stringify(sheet.diagnostics));
 });
 
 test('a resource declared twice takes the maximum, after evaluation', () => {

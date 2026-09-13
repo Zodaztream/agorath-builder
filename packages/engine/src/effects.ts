@@ -24,6 +24,8 @@ import type {
 /** What a scope is tested against. */
 export interface ScopeSubject {
   readonly kind: 'weapon' | 'check' | 'save';
+  /** The id of the thing itself — the weapon a line belongs to, or ''. */
+  readonly id: string;
   readonly melee: boolean;
   readonly ranged: boolean;
   readonly properties: readonly string[];
@@ -33,17 +35,24 @@ export interface ScopeSubject {
 
 /** The broadest subject: matches any scope that does not narrow by kind. */
 export function anySubject(kind: ScopeSubject['kind']): ScopeSubject {
-  return { kind, melee: false, ranged: false, properties: [], skills: [], ability: null };
+  return { kind, id: '', melee: false, ranged: false, properties: [], skills: [], ability: null };
 }
 
 /**
  * A declarative filter, never a predicate. Every constraint a scope states must
- * hold; an absent constraint places no requirement.
+ * hold; an absent constraint places no requirement. `or` relaxes that for the
+ * one case a conjunction cannot express — "finesse or ranged".
  */
 export function matchesScope(scope: Scope | undefined, subject: ScopeSubject): boolean {
   if (scope === undefined) return true;
 
+  if (scope.or !== undefined && !scope.or.some((branch) => matchesScope(branch, subject))) {
+    return false;
+  }
+
   if (scope.kind !== undefined && scope.kind !== subject.kind) return false;
+
+  if (scope.id !== undefined && scope.id !== subject.id) return false;
 
   if (scope.melee !== undefined && scope.melee !== subject.melee) return false;
   if (scope.ranged !== undefined && scope.ranged !== subject.ranged) return false;

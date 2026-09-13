@@ -277,7 +277,21 @@ export interface WeaponEntry {
   readonly properties: readonly string[];
 }
 
+/**
+ * A dice pool, as content writes it.
+ *
+ * `count` may be an **expression string** where the pool grows with level:
+ * Sneak Attack is 1d6 at 1st and 10d6 at 19th, on one feature, and the rogue's
+ * table is the only thing that says so. A number is the common case and stays a
+ * number; see `DerivedDice` for the resolved side.
+ */
 export interface Dice {
+  readonly count: number | string;
+  readonly die: number;
+}
+
+/** A dice pool after evaluation: what a sheet actually rolls. */
+export interface DerivedDice {
   readonly count: number;
   readonly die: number;
 }
@@ -289,14 +303,27 @@ export interface Dice {
 /**
  * A scope narrows which attacks or checks an effect touches. A declarative
  * filter, never a predicate function: content stays data.
+ *
+ * A scope's own constraints are **conjunctive** — every one stated must hold —
+ * and `or` adds a disjunction on top. Sneak Attack is why: "the attack must use
+ * a finesse or a ranged weapon" is a weapon, and then one of two things.
  */
 export interface Scope {
   readonly kind?: 'weapon' | 'check' | 'save';
+  /**
+   * This exact item, by id. A magic weapon's bonus belongs to that weapon and
+   * not to whatever else the character is holding, which is why the engine
+   * scopes an item's own attack and damage effects to it unless the content
+   * says otherwise.
+   */
+  readonly id?: string;
   readonly melee?: boolean;
   readonly ranged?: boolean;
   readonly properties?: readonly string[];
   readonly skills?: readonly SkillId[];
   readonly abilities?: readonly Ability[];
+  /** Matches when any one of these matches. Each is itself a conjunction. */
+  readonly or?: readonly Scope[];
 }
 
 export interface Condition {
@@ -361,6 +388,42 @@ export type ChoiceGrant =
 
 export type EffectShapeId = EffectShape['shape'];
 
+/**
+ * The same catalogue, at runtime, for anything that has to *check* content
+ * rather than compile against it — the pack loader, above all.
+ *
+ * A `Record` keyed by the union's members rather than an array, so adding a
+ * shape to `EffectShape` and forgetting it here is a type error. An array would
+ * drift, and drift here means a pack's effects are silently ignored.
+ */
+export const EFFECT_SHAPES: Readonly<Record<EffectShapeId, true>> = {
+  'ability.increase': true,
+  'proficiency.grant': true,
+  'proficiency.expertise': true,
+  'proficiency.half': true,
+  'check.floor': true,
+  'check.advantage': true,
+  'ac.formula': true,
+  'ac.bonus': true,
+  'hp.per-level': true,
+  'hp.flat': true,
+  'speed.set': true,
+  'speed.bonus': true,
+  'attack.bonus': true,
+  'damage.bonus': true,
+  'damage.dice': true,
+  'attack.count': true,
+  'attack.crit-range': true,
+  'unarmed.die': true,
+  'spellcasting.grant': true,
+  'spell.dc.bonus': true,
+  'initiative.bonus': true,
+  'resource.pool': true,
+  'choice.offer': true,
+};
+
+export const EFFECT_SHAPE_IDS: readonly EffectShapeId[] = Object.keys(EFFECT_SHAPES) as readonly EffectShapeId[];
+
 // ---------------------------------------------------------------------------
 // Derived sheet — computed, never stored
 // ---------------------------------------------------------------------------
@@ -387,7 +450,7 @@ export interface DerivedSave {
 }
 
 export interface DerivedDamageComponent {
-  readonly dice: Dice | null;
+  readonly dice: DerivedDice | null;
   readonly flat: number;
   readonly damageType: DamageType;
   readonly label: string | null;
@@ -428,6 +491,12 @@ export interface DerivedPick {
   readonly id: string;
   readonly name: string;
   readonly pool: string;
+  /**
+   * The entry's own summary, so a player can read what a fighting style or an
+   * invocation does before choosing it. Empty for a skill or a tool, which have
+   * nothing to say.
+   */
+  readonly summary: string;
 }
 
 /**
@@ -441,7 +510,25 @@ export interface DerivedSelection {
   readonly pool: string;
   readonly label: string;
   readonly entitled: number;
+  /** Everything the pool offers, so a picker can be rendered without any rules. */
+  readonly candidates: readonly DerivedPick[];
   readonly picks: readonly DerivedPick[];
+}
+
+/**
+ * A place where the character is entitled to an Ability Score Improvement or a
+ * feat. It is not a pool — the alternatives are two different kinds of choice —
+ * so it is reported separately, and the class table's `asiLevels` remains the
+ * only place the rule lives.
+ */
+export interface DerivedAdvancement {
+  /** Index into `definition.levels`, so the UI knows which entry to show it on. */
+  readonly level: number;
+  readonly classId: string;
+  readonly classLevel: number;
+  readonly kind: 'asi-or-feat';
+  /** True when an ASI or a feat sits on that level entry. */
+  readonly taken: boolean;
 }
 
 export interface DerivedSheet {
@@ -472,6 +559,8 @@ export interface DerivedSheet {
   readonly resources: readonly DerivedResource[];
   /** Every pool the character was offered, and what was taken from it. */
   readonly selections: readonly DerivedSelection[];
+  /** Every level entry that grants an ASI-or-feat, and whether it was spent. */
+  readonly advancements: readonly DerivedAdvancement[];
   /** Things the sheet cannot compute, shown as text. */
   readonly notes: readonly DerivedNote[];
 }

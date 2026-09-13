@@ -90,6 +90,33 @@ proficiencies and your proficiency with thieves' tools." Membership *is* the
 eligibility rule — the engine used to skip a non-proficient expertise silently,
 and now reports it.
 
+`selections` on the derived sheet carries the candidates as well as the picks,
+so a picker can be rendered without the UI knowing any rules. `advancements`
+reports the level entries that grant an ASI-or-feat, for the same reason.
+
+## Scopes, and the one disjunction
+
+A scope is a declarative filter — never a predicate — and its own constraints
+are conjunctive. `or` adds one level of disjunction for the case the book states
+as one:
+
+```json
+{ "kind": "weapon", "or": [ { "properties": ["finesse"] }, { "ranged": true } ] }
+```
+
+That is Sneak Attack (PHB 96). Without it the rider had to be unscoped, which put
+its damage on every weapon the character held. A scope may also name an item id,
+which is how an item's own attack and damage effects stay on that item's line: a
+`+1` longsword does not sharpen the greataxe.
+
+## Dice that grow
+
+`dice.count` is a number, or an expression string when the pool scales with
+level. Sneak Attack is one feature whose dice run 1d6 to 10d6 across twenty
+levels, and a monk's Martial Arts die and a bard's Inspiration die are the same
+shape. The expression is evaluated against the finished character; the sheet
+carries the resolved integer.
+
 ## The derivation pipeline
 
 Passes run in a fixed order, and the order is what produces retroactivity:
@@ -182,10 +209,16 @@ giant strength raises the ceiling with the score, and would be silently clamped.
 
 **Known limitations**
 
-- **Scopes are conjunctive.** A scope can require many things at once but cannot
-  express "finesse *or* ranged", which is what Sneak Attack actually needs. Its
-  rider is therefore declared unscoped and conditional. This is the first thing
-  the PHB authoring pass should resolve.
+- **A scope cannot nest.** One `or` level is all there is, so "finesse, but not
+  heavy" has no spelling and cannot be added without a shape decision. The
+  failure mode is a rider that matches slightly too widely, which is visible on
+  the sheet.
+- **A scope kind of `spell` is not matched against anything yet.** The catalogue
+  names it (Empowered Evocation), the engine has no spell subjects, so such an
+  effect is inert — and the pack reader says so rather than letting it pass.
+- **An item's own AC bonus is global.** `ac.bonus` from a worn item is a
+  character property, which is right; `ac.bonus` from a *weapon* would be too,
+  which is not. No 2014 feature has needed the distinction.
 - **Two offers of one pool that narrow it with different `from` lists cannot be
   told apart at pick time**, so the union is taken and a diagnostic asks the pack
   for distinct pool names. Two classes with their own skill lists should offer
@@ -213,4 +246,13 @@ src/
   content.ts     how the engine reaches content
   derive.ts      the pipeline
   index.ts       public API
+```
+
+The rest of the application:
+
+```
+packages/
+  engine/    this — zero dependencies, pure TypeScript
+  content/   the pack format: reading and validating one file at runtime
+  app/       Preact + TSX + Vite: pack upload, builder, derived sheet
 ```

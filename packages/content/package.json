@@ -1,0 +1,25 @@
+{
+  "name": "@agorath/content",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Content pack schema, runtime reader and validator.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc --noEmit",
+    "verify": "node scripts/verify-pack.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@agorath/engine": "*"
+  }
+}

@@ -6,7 +6,25 @@ a private home campaign.
 Static and client-side, with no backend: it runs from GitHub Pages and keeps
 working offline at the table once loaded.
 
-> **Status: early.** The design is settled; there is no code yet.
+> **Status: pilotable.** The engine, the pack format and the app are built and
+> deployed; a pilot content pack covers three classes. Spell lists, the full
+> library and the private pack build tool are not built yet.
+
+## Running it
+
+```sh
+npm install
+npm test                                  # the engine and pack-format suites
+npm run build --workspace @agorath/app    # static output in packages/app/dist
+npm run dev --workspace @agorath/app      # local dev server
+
+# Check a content pack without opening the browser:
+npm run verify --workspace @agorath/content -- path/to/pack.json
+```
+
+The app needs a content pack to do anything — it ships with no book content.
+Upload one on the **Content** tab; it is kept in your browser and never sent
+anywhere.
 
 ## What it does
 
@@ -48,9 +66,15 @@ So the content is split by licence:
 | **Published non-SRD** | Xanathar's, Tasha's, the PHB | A private **content pack**, distributed to players directly and loaded at runtime |
 | **Campaign homebrew** | Table-specific items | Player-authored, living in the character file |
 
-The pack is a versioned JSON file a player imports once in the browser. It is
-never fetched from a server and never committed here — this repository contains
-no book content of any kind.
+The pack is a **single versioned JSON file** a player imports once in the
+browser: one entry per class, subclass, option, feat, race, background and item,
+all in one document, validated on load. It is never fetched from a server and
+never committed here — this repository contains no book content of any kind, and
+`.gitignore` is default-deny for exactly that reason.
+
+To check a pack before sharing it, `npm run verify --workspace @agorath/content`
+prints every error and warning without opening the app — including the check that
+matters most, an offer naming a pool nobody authored options for.
 
 Content is **data, not code**: adding a subclass means adding an entry, never
 adding a branch to the engine.

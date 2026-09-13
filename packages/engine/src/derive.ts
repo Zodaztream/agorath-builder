@@ -30,6 +30,8 @@ import {
   type ChoiceGrant,
   type CustomItem,
   type DerivedAbility,
+  type DerivedAdvancement,
+  type DerivedDice,
   type DerivedAttack,
   type DerivedDamageComponent,
   type DerivedNote,
@@ -40,6 +42,9 @@ import {
   type DerivedSheet,
   type DerivedSkill,
   type DerivedSpellcasting,
+  type Dice,
+  type Effect,
+  type EffectShapeId,
   type ItemEntry,
   type OptionEntry,
   type SkillId,
@@ -91,6 +96,8 @@ interface PoolMember {
   readonly id: string;
   readonly name: string;
   readonly kind: 'skill' | 'tool' | 'option' | 'subclass';
+  /** What the entry says about itself, for a picker. Empty when it has none. */
+  readonly summary: string;
   /** The entry behind the pick, when there is one. */
   readonly option: OptionEntry | null;
   readonly subclass: SubclassEntry | null;
@@ -209,10 +216,25 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
 
   // Choices made per level, with the class level reached at that entry.
   const runningLevels: Record<string, number> = {};
-  for (const level of definition.levels) {
+  const advancements: DerivedAdvancement[] = [];
+  for (let index = 0; index < definition.levels.length; index += 1) {
+    const level = definition.levels[index] as (typeof definition.levels)[number];
     const classLevelHere = (runningLevels[level.class] ?? 0) + 1;
     runningLevels[level.class] = classLevelHere;
     const rules = classRules(level.class);
+
+    // Where the class table grants an ASI, the UI has something to offer. The
+    // rule itself stays in CLASS_RULES; this is only the character's own view
+    // of it, so no screen has to re-implement the level arithmetic.
+    if (rules !== null && rules.asiLevels.includes(classLevelHere)) {
+      advancements.push({
+        level: index,
+        classId: level.class,
+        classLevel: classLevelHere,
+        kind: 'asi-or-feat',
+        taken: level.choices.some((c) => c.kind === 'asi' || c.kind === 'feat'),
+      });
+    }
 
     for (const choice of level.choices) {
       if (choice.kind === 'asi') {
@@ -287,15 +309,7 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
   for (const carried of definition.inventory) {
     const entry: ItemEntry | null =
       carried.custom !== null
-        ? {
-            id: carried.custom.id,
-            name: carried.custom.name,
-            weight: 0,
-            armor: null,
-            weapon: null,
-            requiresAttunement: false,
-            effects: carried.custom.effects,
-          }
+        ? customAsItem(carried.custom, content, diagnostics)
         : content.item(carried.item);
 
     if (entry === null) {
@@ -319,7 +333,10 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
       weaponSources.push({ name: entry.name, entry, custom: carried.custom });
     }
 
-    for (const effect of entry.effects) collectEffect(acc, effect, entry.name);
+    // An item's own attack and damage effects belong to that item: a +1
+    // longsword must not sharpen the greataxe as well. Content overrides this
+    // by stating a scope of its own.
+    for (const effect of entry.effects) collectEffect(acc, scopedToItem(effect, entry), entry.name);
   }
 
   if (attuned > ATTUNEMENT_LIMIT) {
@@ -518,6 +535,7 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
     if (!proficient) {
       const subject: ScopeSubject = {
         kind: 'check',
+        id: '',
         melee: false,
         ranged: false,
         properties: [],
@@ -564,6 +582,7 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
     const abilityScoreMod = mod(ability);
     const subject: ScopeSubject = {
       kind: 'weapon',
+      id: source.entry?.id ?? '',
       melee: weapon.melee,
       ranged: weapon.ranged,
       properties: weapon.properties,
@@ -588,7 +607,7 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
 
     const damage: DerivedDamageComponent[] = [
       {
-        dice: weapon.damage,
+        dice: resolveDice(weapon.damage, expressionContext, diagnostics, source.name),
         flat: abilityScoreMod,
         damageType: weapon.damageType,
         label: null,
@@ -606,7 +625,7 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
     for (const rider of acc.damageDice) {
       if (!matchesScope(rider.scope, subject)) continue;
       damage.push({
-        dice: rider.dice,
+        dice: resolveDice(rider.dice, expressionContext, diagnostics, rider.label),
         flat: 0,
         damageType: rider.damageType,
         label: rider.label,
@@ -757,8 +776,74 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
     spellcasting,
     resources,
     selections: describeSelections(resolved, acc.offers, selections),
+    advancements,
     notes,
     diagnostics,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Items
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a dice pool. A number passes through; an expression is evaluated
+ * against the finished character, which is what lets one feature carry a pool
+ * that grows — Sneak Attack, a monk's Martial Arts die, Bardic Inspiration.
+ * A bad expression is a diagnostic with the pool at zero rather than a crash.
+ */
+function resolveDice(
+  dice: Dice,
+  context: ExpressionContext,
+  diagnostics: string[],
+  label: string,
+): DerivedDice {
+  if (typeof dice.count === 'number') return { count: dice.count, die: dice.die };
+  try {
+    return { count: Math.max(0, Math.round(evaluate(dice.count, context))), die: dice.die };
+  } catch (error) {
+    diagnostics.push(`Dice for "${label}": ${(error as Error).message}`);
+    return { count: 0, die: dice.die };
+  }
+}
+
+/** Shapes that describe one weapon's own line, not the whole character. */
+const WEAPON_LINE_SHAPES: readonly EffectShapeId[] = ['attack.bonus', 'damage.bonus', 'damage.dice'];
+
+/**
+ * Scope an item's line effects to the item itself, unless the content already
+ * said something. `scope` was written for features — Archery applies to every
+ * ranged weapon — but an item's bonus is a property of the item.
+ */
+function scopedToItem(effect: Effect, entry: ItemEntry): Effect {
+  if (effect.scope !== undefined || entry.weapon === null) return effect;
+  if (!WEAPON_LINE_SHAPES.includes(effect.shape)) return effect;
+  return { ...effect, scope: { kind: 'weapon', id: entry.id } };
+}
+
+/**
+ * A player-authored item, built on a real base.
+ *
+ * The base supplies the mundane statistics — damage die, weight, armour
+ * formula, attunement — so they are never hand-typed and never wrong. The
+ * custom effects are laid on top, and the base's own effects come with it, so
+ * a `+1` longsword made from a `+1` longsword is not a way to lose the +1.
+ */
+function customAsItem(custom: CustomItem, content: ContentProvider, diagnostics: string[]): ItemEntry {
+  const base = custom.base === null ? null : content.item(custom.base);
+  if (custom.base !== null && base === null) {
+    diagnostics.push(
+      `Custom item "${custom.name}" is built on "${custom.base}", which is not in any loaded pack.`,
+    );
+  }
+  return {
+    id: custom.id,
+    name: custom.name,
+    weight: base?.weight ?? 0,
+    armor: base?.armor ?? null,
+    weapon: base?.weapon ?? null,
+    requiresAttunement: base?.requiresAttunement ?? false,
+    effects: [...(base?.effects ?? []), ...custom.effects],
   };
 }
 
@@ -783,6 +868,7 @@ function resolvePool(
     id,
     name: SKILL_NAMES[id],
     kind: 'skill',
+    summary: '',
     option: null,
     subclass: null,
   });
@@ -812,19 +898,19 @@ function resolvePool(
     }
     if (kinds.includes('tool')) {
       for (const id of acc.toolProficiencies) {
-        members.set(id, { id, name: id, kind: 'tool', option: null, subclass: null });
+        members.set(id, { id, name: id, kind: 'tool', summary: '', option: null, subclass: null });
       }
     }
   } else if (family === 'subclass') {
     kind = 'subclass';
     for (const entry of content.subclassesOf(qualifier)) {
-      members.set(entry.id, { id: entry.id, name: entry.name, kind: 'subclass', option: null, subclass: entry });
+      members.set(entry.id, { id: entry.id, name: entry.name, kind: 'subclass', summary: '', option: null, subclass: entry });
     }
   } else {
     // A content pool is matched on its exact tag, qualifier included.
     kind = 'content';
     for (const entry of content.options(pool)) {
-      members.set(entry.id, { id: entry.id, name: entry.name, kind: 'option', option: entry, subclass: null });
+      members.set(entry.id, { id: entry.id, name: entry.name, kind: 'option', summary: entry.summary, option: entry, subclass: null });
     }
   }
 
@@ -840,6 +926,16 @@ function resolvePool(
     );
   }
   const allowed = unrestricted || distinct.size === 0 ? null : new Set(narrower.flat());
+
+  // A `from` naming something the pool does not contain is a typo, and it would
+  // otherwise show up only as an option the player cannot see or select.
+  if (members.size > 0) {
+    for (const id of allowed ?? []) {
+      if (!members.has(id)) {
+        diagnostics.push(`Pool "${pool}" narrows to "${id}", which is not in the pool.`);
+      }
+    }
+  }
 
   const grants = offers[0]?.grants ?? [];
   const grantShapes = new Set(offers.map((offer) => offer.grants.map((g) => g.shape).sort().join(',')));
@@ -964,7 +1060,7 @@ function describeSelections(
     const bucket = picksByPool.get(selection.pool) ?? [];
     for (const pick of selection.picks) {
       const member = resolved.get(selection.pool)?.members.get(pick);
-      bucket.push({ id: pick, name: member?.name ?? pick, pool: selection.pool });
+      bucket.push({ id: pick, name: member?.name ?? pick, pool: selection.pool, summary: member?.summary ?? '' });
     }
     picksByPool.set(selection.pool, bucket);
   }
@@ -972,10 +1068,18 @@ function describeSelections(
   const out: DerivedSelection[] = [];
   for (const pool of pools) {
     const entry = resolved.get(pool);
+    const members = entry === undefined ? [] : [...entry.members.values()];
+    // The candidates are what the offers *allow*, not the pool's whole
+    // membership: a fighter chooses between eight skills, not eighteen, and a
+    // picker that showed all eighteen would only reject ten of them later.
+    const candidates = members
+      .filter((member) => entry?.allowed === null || entry?.allowed?.has(member.id) === true)
+      .map((member) => ({ id: member.id, name: member.name, pool, summary: member.summary }));
     out.push({
       pool,
       label: entry?.label ?? pool,
       entitled: entry?.entitled ?? 0,
+      candidates,
       picks: picksByPool.get(pool) ?? [],
     });
   }
