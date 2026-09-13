@@ -577,8 +577,28 @@ function readItem(
           kind: asString(armorRaw['kind'], 'light') as 'light' | 'medium' | 'heavy' | 'shield',
           baseAc: asNumber(armorRaw['baseAc']),
           maxDex: typeof armorRaw['maxDex'] === 'number' ? asNumber(armorRaw['maxDex']) : null,
+          // The Armor table's Strength and Stealth columns (PHB 145). Absent
+          // means "the table prints a dash", which is what a pack authored
+          // before these fields existed also means — so an old pack loads and
+          // behaves as it did, and `verify-pack` is what insists a new one says
+          // so explicitly.
+          strength: typeof armorRaw['strength'] === 'number' ? asNumber(armorRaw['strength']) : null,
+          stealthDisadvantage: asBoolean(armorRaw['stealthDisadvantage'], false),
         }
       : null;
+
+  // The two columns are read with defaults so that a pack authored before they
+  // existed still loads and behaves as it did. That defaulting is exactly why
+  // an omission has to be said out loud: "the table prints a dash" and "nobody
+  // looked" would otherwise be the same pack.
+  if (
+    isObject(armorRaw) &&
+    (armorRaw['strength'] === undefined || armorRaw['stealthDisadvantage'] === undefined)
+  ) {
+    warnings.push(
+      `${where}: armour should declare both "strength" and "stealthDisadvantage" — write null and false where the Armor table prints a dash (PHB 145).`,
+    );
+  }
 
   const weapon =
     isObject(weaponRaw)

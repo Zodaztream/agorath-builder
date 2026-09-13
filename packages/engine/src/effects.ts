@@ -11,6 +11,7 @@ import type {
   Ability,
   ChoiceGrant,
   DamageType,
+  DerivedGrantedItem,
   Dice,
   Effect,
   Scope,
@@ -191,6 +192,12 @@ export interface Accumulator {
   readonly resources: ResourceGrant[];
   /** Every "choose N from a pool" the character's features offer. */
   readonly offers: OfferGrant[];
+  /**
+   * Items the character's content says they carry. Collected here rather than
+   * written to the definition, because the definition is the player's: the
+   * builder reads this list and reconciles the inventory against it.
+   */
+  readonly itemGrants: DerivedGrantedItem[];
   readonly notes: FeatureNote[];
 }
 
@@ -223,6 +230,7 @@ export function emptyAccumulator(): Accumulator {
     spellcasting: [],
     resources: [],
     offers: [],
+    itemGrants: [],
     notes: [],
   };
 }
@@ -245,7 +253,17 @@ function scoped(effect: Effect): { scope: Scope | undefined; conditional: boolea
  * `origin` names where the effect came from, for diagnostics and for the
  * breakdown shown on the sheet.
  */
-export function collectEffect(acc: Accumulator, effect: Effect, origin: string): void {
+export function collectEffect(
+  acc: Accumulator,
+  effect: Effect,
+  origin: string,
+  /**
+   * The *id* of the entry the effect came from. Diagnostics and breakdowns use
+   * the display name, but a granted item records the id, because the inventory
+   * keeps it and a renamed feature must not orphan what it gave.
+   */
+  originId: string = origin,
+): void {
   switch (effect.shape) {
     case 'ability.increase':
       // Collected, not applied here: the ability pass reads this before it
@@ -391,6 +409,16 @@ export function collectEffect(acc: Accumulator, effect: Effect, origin: string):
         grants: effect.grants,
         origin,
       });
+      break;
+
+    case 'inventory.grant':
+      for (const granted of effect.items) {
+        acc.itemGrants.push({
+          item: granted.item,
+          quantity: granted.quantity,
+          grantedBy: originId,
+        });
+      }
       break;
   }
 }

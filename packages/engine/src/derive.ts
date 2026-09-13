@@ -26,6 +26,7 @@ import {
   ABILITIES,
   ABILITY_NAMES,
   type Ability,
+  type ArmorEntry,
   type CharacterDefinition,
   type ChoiceGrant,
   type CustomItem,
@@ -34,6 +35,7 @@ import {
   type DerivedDice,
   type DerivedAttack,
   type DerivedDamageComponent,
+  type DerivedGrantedItem,
   type DerivedNote,
   type DerivedPick,
   type DerivedResource,
@@ -90,6 +92,9 @@ const PASSIVE_SKILLS = ['perception', 'investigation', 'insight'] as const;
 
 /** A character may be attuned to at most three magic items. */
 export const ATTUNEMENT_LIMIT = 3;
+
+/** What armour costs in movement when the wearer misses its Strength (PHB 144). */
+export const ARMOR_SPEED_PENALTY = 10;
 
 /** What a pick from a pool turned out to be. */
 interface PoolMember {
@@ -181,7 +186,15 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
   for (const effect of subrace?.effects ?? []) collectEffect(acc, effect, subrace?.name ?? 'subrace');
   for (const effect of background?.effects ?? []) collectEffect(acc, effect, background?.name ?? 'background');
 
-  // A class's features, once, at the level that class has reached.
+  // A class's features, once, at the level that class has reached — not once
+  // per level entry, which is what would give a 5th-level rogue five Sneak
+  // Attack riders.
+  //
+  // Only the class taken at character level 1 brings its equipment. The book
+  // grants a multiclass character the new class's features and prints no
+  // exception for equipment; the exception is the DM's ruling, so it is applied
+  // here, said out loud, rather than left for a screen to remember (ADR-0013).
+  const firstClass = definition.levels[0]?.class ?? null;
   for (const classId of Object.keys(classLevels)) {
     const classLevel = classLevels[classId] ?? 0;
     const entry = content.class(classId);
@@ -191,9 +204,15 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
     }
     for (const feature of entry.features) {
       if (feature.level > classLevel) continue;
+      if (classId !== firstClass && grantsEquipment(feature)) {
+        diagnostics.push(
+          `${entry.name} starting equipment is not granted: a multiclass character takes equipment from their first class only.`,
+        );
+        continue;
+      }
       featureIds.add(feature.id);
       notes.push({ name: feature.name, level: feature.level, summary: feature.summary });
-      for (const effect of feature.effects) collectEffect(acc, effect, feature.name);
+      for (const effect of feature.effects) collectEffect(acc, effect, feature.name, feature.id);
     }
   }
 
@@ -302,8 +321,9 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
 
   // -- pass 2: equipment ----------------------------------------------------
   let attuned = 0;
-  let armorWorn: { name: string; baseAc: number; maxDex: number | null } | null = null;
+  let armorWorn: { name: string; armor: ArmorEntry } | null = null;
   let shieldEquipped = false;
+  let shieldWorn: string | null = null;
   const weaponSources: { name: string; entry: ItemEntry | null; custom: CustomItem | null }[] = [];
 
   for (const carried of definition.inventory) {
@@ -327,8 +347,12 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
     if (!carried.equipped) continue;
 
     if (entry.armor !== null) {
-      if (entry.armor.kind === 'shield') shieldEquipped = true;
-      else armorWorn = { name: entry.name, baseAc: entry.armor.baseAc, maxDex: entry.armor.maxDex };
+      if (entry.armor.kind === 'shield') {
+        shieldEquipped = true;
+        shieldWorn = entry.name;
+      } else {
+        armorWorn = { name: entry.name, armor: entry.armor };
+      }
     } else if (entry.weapon !== null) {
       weaponSources.push({ name: entry.name, entry, custom: carried.custom });
     }
@@ -388,6 +412,44 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
     abilities[ability] = { id: ability, score, modifier: abilityModifier(score) };
   }
   const mod = (ability: Ability): number => abilities[ability].modifier;
+
+  // -- pass 4b: what the worn armour does ------------------------------------
+  // PHB 144, and the whole of it. Only one of these rules is a number the sheet
+  // can carry — armour you have not the Strength for costs 10 feet of movement
+  // — so only that one is computed. Non-proficiency and the Stealth column are
+  // conditions on a die roll; a printed sheet states them, and so does this.
+  //
+  // The comparison is against the Strength *score*, not the modifier, which is
+  // what the rule names and what makes Str 13 legal for chain mail but not for
+  // plate.
+  const armorNotes: string[] = [];
+  let armorSpeedPenalty = 0;
+
+  const wornPieces: { readonly name: string; readonly armor: ArmorEntry }[] = [];
+  if (armorWorn !== null) wornPieces.push({ name: armorWorn.name, armor: armorWorn.armor });
+  if (shieldEquipped) {
+    wornPieces.push({
+      name: shieldWorn ?? 'Shield',
+      armor: { kind: 'shield', baseAc: 0, maxDex: null, strength: null, stealthDisadvantage: false },
+    });
+  }
+
+  for (const piece of wornPieces) {
+    if (!acc.armorProficiencies.has(piece.armor.kind)) {
+      armorNotes.push(
+        `Not proficient with ${piece.name}: disadvantage on Strength and Dexterity checks, saves and attacks, and no spellcasting (PHB 144).`,
+      );
+    }
+    if (piece.armor.stealthDisadvantage) {
+      armorNotes.push(`${piece.name}: disadvantage on Dexterity (Stealth) checks (PHB 144).`);
+    }
+    if (piece.armor.strength !== null && abilities.str.score < piece.armor.strength) {
+      armorSpeedPenalty += ARMOR_SPEED_PENALTY;
+      armorNotes.push(
+        `${piece.name} requires Strength ${piece.armor.strength}, and yours is ${abilities.str.score}: your speed is reduced by ${ARMOR_SPEED_PENALTY} feet (PHB 144).`,
+      );
+    }
+  }
 
   const expressionContext: ExpressionContext = {
     totalLevel,
@@ -452,13 +514,13 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
   const acCandidates: { label: string; value: number }[] = [];
 
   if (armorWorn !== null) {
-    const cap = armorWorn.maxDex;
+    const cap = armorWorn.armor.maxDex;
     // A cap of 0 means heavy armour: DEX is ignored entirely, penalty included.
     const dexPart = cap === null ? mod('dex') : cap === 0 ? 0 : Math.min(mod('dex'), cap);
     const dexText = cap === 0 ? 'no DEX' : `${dexPart >= 0 ? '+' : ''}${dexPart} DEX`;
     acCandidates.push({
-      label: `${armorWorn.name} (${armorWorn.baseAc} ${dexText})`,
-      value: armorWorn.baseAc + dexPart,
+      label: `${armorWorn.name} (${armorWorn.armor.baseAc} ${dexText})`,
+      value: armorWorn.armor.baseAc + dexPart,
     });
   } else {
     acCandidates.push({ label: `Unarmoured (10 + ${mod('dex')} DEX)`, value: 10 + mod('dex') });
@@ -748,8 +810,28 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
     resources.push({ id, max, recharge: grants[0]?.recharge ?? 'long' });
   }
 
+  // -- what the class and the background hand over --------------------------
+  // Grants are collected, never applied here: the definition's inventory is the
+  // player's, so the builder reads this list and reconciles the inventory
+  // against it (ADR-0013). A grant naming an item no pack defines is a pack
+  // defect, said once here rather than item by item when it reaches the
+  // inventory.
+  const startingItems: DerivedGrantedItem[] = [];
+  for (const granted of acc.itemGrants) {
+    if (content.item(granted.item) === null) {
+      diagnostics.push(
+        `Granted item "${granted.item}" is not in any loaded pack, so "${granted.grantedBy}" grants nothing.`,
+      );
+      continue;
+    }
+    startingItems.push(granted);
+  }
+
   // -- finish ---------------------------------------------------------------
-  const speed = (acc.speed ?? 30) + acc.speedBonus;
+  // Armour that the wearer has not the Strength for is the one thing that
+  // lowers speed rather than raising it, so it is subtracted rather than folded
+  // into the bonus — a "bonus" of −10 would be a lie in the breakdown.
+  const speed = Math.max(0, (acc.speed ?? 30) + acc.speedBonus - armorSpeedPenalty);
 
   return {
     name: definition.name,
@@ -776,6 +858,8 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
     spellcasting,
     resources,
     selections: describeSelections(resolved, acc.offers, selections),
+    startingItems,
+    armorNotes,
     advancements,
     notes,
     diagnostics,
@@ -785,6 +869,20 @@ export function derive(definition: CharacterDefinition, content: ContentProvider
 // ---------------------------------------------------------------------------
 // Items
 // ---------------------------------------------------------------------------
+
+/**
+ * Whether a feature is a class's starting-equipment feature.
+ *
+ * Recognised by shape rather than by name: a feature that hands out items is
+ * one, and nothing else in the catalogue does. Naming it by id or by pool
+ * prefix would be the magic-string rule ADR-0009 rejected — and this rule needs
+ * to hold for a class authored next year.
+ */
+export function grantsEquipment(feature: {
+  readonly effects: readonly { readonly shape: string }[];
+}): boolean {
+  return feature.effects.some((effect) => effect.shape === 'inventory.grant');
+}
 
 /**
  * Resolve a dice pool. A number passes through; an expression is evaluated
@@ -1056,7 +1154,7 @@ function validateAndApply(
       // A content pool: the entry carries its own reward.
       featureIds.add(member.option.id);
       notes.push({ name: member.option.name, level: selection.classLevel, summary: member.option.summary });
-      for (const effect of member.option.effects) collectEffect(acc, effect, member.option.name);
+      for (const effect of member.option.effects) collectEffect(acc, effect, member.option.name, member.option.id);
       continue;
     }
 

@@ -81,6 +81,17 @@ export const rogue: ClassEntry = {
       { shape: 'choice.offer', pool: 'proficient:skill+tool', label: 'Expertise', count: 2, from: null,
         grants: [{ shape: 'proficiency.expertise' }] },
     ] },
+    // A class's kit: fixed items granted outright, and one choice of pack. The
+    // feature is recognised as a starting-equipment feature by the grant it
+    // carries, which is what the multiclass rule keys on (ADR-0013).
+    { id: 'rogue-equipment', name: 'Equipment', level: 1, summary: 'Fixture: what a rogue starts with, in addition to their background.', effects: [
+      { shape: 'inventory.grant', items: [
+        { item: 'leather', quantity: 1 },
+        { item: 'dagger', quantity: 2 },
+        { item: 'thieves-tools', quantity: 1 },
+      ] },
+      { shape: 'choice.offer', pool: 'starting-equipment:rogue:pack', label: 'Pack', count: 1, from: null, grants: [] },
+    ] },
   ],
 };
 
@@ -200,6 +211,33 @@ export const eldritchSpear: OptionEntry = {
  * `hasFeature()` resolves ids. This prerequisite can never be met, which is
  * exactly what a pack author would not notice.
  */
+export const burglarPack: OptionEntry = {
+  id: 'rogue-pack-burglar', name: "Burglar's Pack", pool: 'starting-equipment:rogue:pack',
+  summary: 'Fixture: a pack of thieving kit.',
+  prerequisites: [],
+  effects: [{ shape: 'inventory.grant', items: [{ item: 'burglars-pack', quantity: 1 }] }],
+};
+
+export const explorerPack: OptionEntry = {
+  id: 'rogue-pack-explorer', name: "Explorer's Pack", pool: 'starting-equipment:rogue:pack',
+  summary: 'Fixture: a pack for the wild.',
+  prerequisites: [],
+  effects: [{ shape: 'inventory.grant', items: [{ item: 'explorers-pack', quantity: 1 }] }],
+};
+
+/** Grants something no pack defines, which a pack must never do. */
+export const brokenPack: OptionEntry = {
+  id: 'rogue-pack-missing', name: 'Missing Pack', pool: 'starting-equipment:rogue:pack',
+  summary: 'Fixture: grants an item nobody authored.',
+  prerequisites: [],
+  effects: [{ shape: 'inventory.grant', items: [{ item: 'no-such-item', quantity: 1 }] }],
+};
+
+/**
+ * The trap: "extra-attack" is Extra Attack's *name*, not its id, and
+ * `hasFeature()` resolves ids. This prerequisite can never be met, which is
+ * exactly what a pack author would not notice.
+ */
 export const nameTrap: OptionEntry = {
   id: 'invocation-name-trap', name: 'Name Trap', pool: 'invocation',
   summary: 'Fixture: a prerequisite written against a display name.',
@@ -279,9 +317,15 @@ const armour = (
   kind: 'light' | 'medium' | 'heavy' | 'shield',
   baseAc: number,
   maxDex: number | null,
+  /** The Armor table's Strength column (PHB 145), and its Stealth column. */
+  extra: { strength?: number | null; stealthDisadvantage?: boolean } = {},
 ): ItemEntry => ({
   id, name, summary: '', weight: 10, weapon: null, requiresAttunement: false, effects: [],
-  armor: { kind, baseAc, maxDex },
+  armor: {
+    kind, baseAc, maxDex,
+    strength: extra.strength ?? null,
+    stealthDisadvantage: extra.stealthDisadvantage ?? false,
+  },
 });
 
 export const longsword = weapon('longsword', 'Longsword', 'martial', { count: 1, die: 8 }, 'slashing', [], { versatile: { count: 1, die: 10 } });
@@ -305,14 +349,28 @@ export const cloakOfProtection: ItemEntry = {
   effects: [{ shape: 'ac.bonus', amount: 1 }],
 };
 
-export const chainMail = armour('chain-mail', 'Chain Mail', 'heavy', 16, 0);
-export const scaleMail = armour('scale-mail', 'Scale Mail', 'medium', 14, 2);
+// The Strength and Stealth columns are the Armor table's own (PHB 145): chain
+// mail needs Str 13 and is noisy, scale mail is only noisy, and the light suits
+// print a dash in both.
+export const chainMail = armour('chain-mail', 'Chain Mail', 'heavy', 16, 0, { strength: 13, stealthDisadvantage: true });
+export const plateArmor = armour('plate', 'Plate', 'heavy', 18, 0, { strength: 15, stealthDisadvantage: true });
+export const scaleMail = armour('scale-mail', 'Scale Mail', 'medium', 14, 2, { stealthDisadvantage: true });
 export const studdedLeather = armour('studded-leather', 'Studded Leather', 'light', 12, null);
 export const leatherArmor = armour('leather', 'Leather Armor', 'light', 11, null);
 export const shield = armour('shield', 'Shield', 'shield', 2, 0);
 
+/** Gear that is neither weapon nor armour, so the starting kits have somewhere to land. */
+const gear = (id: string, name: string): ItemEntry => ({
+  id, name, summary: 'Fixture: ordinary gear.', weight: 1, armor: null, weapon: null,
+  requiresAttunement: false, effects: [],
+});
+
+export const thievesTools = gear('thieves-tools', "Thieves' Tools");
+export const burglarsPack = gear('burglars-pack', "Burglar's Pack");
+export const explorersPack = gear('explorers-pack', "Explorer's Pack");
+
 export const ALL_CLASSES = [fighter, rogue, barbarian, monk, bard, wizard, paladin, warlock, cleric];
 export const ALL_SUBCLASSES = [champion];
-export const ALL_OPTIONS = [archery, defense, agonizingBlast, eldritchSpear, nameTrap];
-export const ALL_ITEMS = [longsword, longswordPlus1, greataxe, dagger, shortbow, cloakOfProtection, chainMail, scaleMail, studdedLeather, leatherArmor, shield];
+export const ALL_OPTIONS = [archery, defense, agonizingBlast, eldritchSpear, nameTrap, burglarPack, explorerPack];
+export const ALL_ITEMS = [longsword, longswordPlus1, greataxe, dagger, shortbow, cloakOfProtection, chainMail, plateArmor, scaleMail, studdedLeather, leatherArmor, shield, thievesTools, burglarsPack, explorersPack];
 export const ALL_FEATS = [tough, tavernBrawler, grappler];

@@ -115,6 +115,13 @@ export interface InventoryItem {
   readonly attuned: boolean;
   /** A player-authored item, carried inline so it travels with the export. */
   readonly custom: CustomItem | null;
+  /**
+   * The entry that put this item here — a class's Equipment feature, a
+   * background, or a package option. Absent for anything the player added by
+   * hand, which is what lets a re-picked package withdraw exactly what it
+   * granted and nothing else (ADR-0013).
+   */
+  readonly grantedBy?: string;
 }
 
 export interface Currency {
@@ -281,6 +288,25 @@ export interface ArmorEntry {
   readonly baseAc: number;
   /** Maximum DEX modifier the armour allows. Null when uncapped. */
   readonly maxDex: number | null;
+  /**
+   * The Armor table's Strength column (PHB 145): 13 or 15 on the heavy suits
+   * that need it, null where the table prints a dash. Wearing armour whose
+   * requirement you miss costs 10 feet of speed (PHB 144).
+   */
+  readonly strength: number | null;
+  /** The Armor table's Stealth column: disadvantage on DEX (Stealth) checks. */
+  readonly stealthDisadvantage: boolean;
+}
+
+/**
+ * One line of "this choice gives you that". A package is a list of these, and
+ * the list has to be able to hold several items, because the book's own options
+ * do: *"a shortbow and quiver of 20 arrows"* (PHB 96) is one choice conferring
+ * two different things.
+ */
+export interface GrantedItem {
+  readonly item: string;
+  readonly quantity: number;
 }
 
 export interface ItemEntry {
@@ -392,7 +418,13 @@ export type EffectShape =
   | { readonly shape: 'spell.dc.bonus'; readonly amount: number }
   | { readonly shape: 'initiative.bonus'; readonly amount: number }
   | { readonly shape: 'resource.pool'; readonly id: string; readonly max: string; readonly recharge: 'short' | 'long' }
-  | { readonly shape: 'choice.offer'; readonly pool: string; readonly label: string; readonly count: number; readonly from: readonly string[] | null; readonly grants: readonly ChoiceGrant[] };
+  | { readonly shape: 'choice.offer'; readonly pool: string; readonly label: string; readonly count: number; readonly from: readonly string[] | null; readonly grants: readonly ChoiceGrant[] }
+  /**
+   * Puts items into the character's inventory. It is a plain effect, not a
+   * `ChoiceGrant`: a package option is content-backed, so the picked entry
+   * carries its own effect, exactly as a picked feat does (ADR-0013).
+   */
+  | { readonly shape: 'inventory.grant'; readonly items: readonly GrantedItem[] };
   // Note: there is deliberately no `feature.text` shape. Every FeatureEntry
   // already carries a name, a level and a summary, and the derivation pass
   // surfaces those as notes. A separate text shape would duplicate that.
@@ -448,6 +480,7 @@ export const EFFECT_SHAPES: Readonly<Record<EffectShapeId, true>> = {
   'initiative.bonus': true,
   'resource.pool': true,
   'choice.offer': true,
+  'inventory.grant': true,
 };
 
 export const EFFECT_SHAPE_IDS: readonly EffectShapeId[] = Object.keys(EFFECT_SHAPES) as readonly EffectShapeId[];
@@ -498,6 +531,16 @@ export interface DerivedNote {
   readonly name: string;
   readonly level: number;
   readonly summary: string;
+}
+
+/**
+ * A granted item, and what granted it. `grantedBy` is the id of the entry that
+ * said so, never a display name, so it survives a rename — and so an item the
+ * player added themselves (which has no `grantedBy`) is never withdrawn by a
+ * package being re-picked.
+ */
+export interface DerivedGrantedItem extends GrantedItem {
+  readonly grantedBy: string;
 }
 
 export interface DerivedSpellcasting {
@@ -587,6 +630,21 @@ export interface DerivedSheet {
   readonly resources: readonly DerivedResource[];
   /** Every pool the character was offered, and what was taken from it. */
   readonly selections: readonly DerivedSelection[];
+  /**
+   * Everything the character's class and background say they start with, and
+   * every package a pick conferred — the list the builder materialises into the
+   * inventory. It is derived, not stored: the definition holds the items.
+   */
+  readonly startingItems: readonly DerivedGrantedItem[];
+  /**
+   * What the worn armour does to the character, in the book's words (PHB 144):
+   * a Strength requirement missed, a Stealth column, a proficiency they lack.
+   *
+   * These are *consequences*, not faults — anyone may wear armour they are not
+   * proficient with — so they are stated here rather than raised as
+   * diagnostics. The one that is a number is computed into `speed`.
+   */
+  readonly armorNotes: readonly string[];
   /** Every level entry that grants an ASI-or-feat, and whether it was spent. */
   readonly advancements: readonly DerivedAdvancement[];
   /** Things the sheet cannot compute, shown as text. */

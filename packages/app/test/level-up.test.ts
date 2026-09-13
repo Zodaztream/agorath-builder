@@ -286,7 +286,13 @@ test('a taken level replays identically, which is what makes the history trustwo
 
   assert.equal(derived.totalLevel, preview.totalLevel);
   assert.equal(derived.classLevels['rogue'], 1);
-  assert.deepEqual(derived.diagnostics, [], 'a legal level makes no objection');
+  // The one objection is the multiclass equipment ruling (ADR-0013): this
+  // character took rogue as a second class, so the rogue's kit is not granted.
+  // It is the same on the replay as it was at level-up, which is the point.
+  assert.deepEqual(
+    derived.diagnostics,
+    ['Rogue starting equipment is not granted: a multiclass character takes equipment from their first class only.'],
+  );
   assert.deepEqual(
     derived.skills.filter((skill) => skill.proficient).map((skill) => skill.id).sort(),
     ['deception', 'insight', 'perception', 'stealth'],
